@@ -16,6 +16,7 @@ const days = (a, b) => Math.round((D(b) - D(a)) / 864e5);
 const fmtD = s => s ? D(s).toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC'}) : '—';
 const fmtE = s => s ? D(s).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}) : '—';
 const median = a => {const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null};
+const rp = (x, d = 0) => x == null ? '—' : (x * 100).toFixed(d) + '%';   // ask/bid ratio; null when a leg has no quote
 const cap = x => x == null ? '' : x >= 1e9 ? '$' + (x / 1e9).toFixed(1) + 'B' : '$' + (x / 1e6).toFixed(0) + 'M';
 
 /* ---------- state ---------- */
@@ -179,8 +180,8 @@ function vScreener() {
   const rows = list.map(t => {const a = t.a || {}, st = stage(t), ok = a.baRatio && a.fq;
     return `<tr class="${t.symbol === (sel() || {}).symbol ? 'sel' : ''}"><td class="tk">${t.symbol}</td><td>${fmtE(t.date)} ${pill(t.timing, 'p-neutral')}</td><td class="r num">${t.S ? t.S.toFixed(2) : '—'}</td><td class="num">${a.K ?? '—'} ${a.right || ''}</td>
     <td>${t.front ? fmtE(t.front) + ' / ' + fmtE(a.back) : '—'}</td>
-    <td class="r num">${ok ? f2(a.fq[0]) + ' / ' + f2(a.fq[1]) : '—'}</td><td>${ok ? pill((a.baRatio[0] * 100).toFixed(0) + '%', baCls(a.baRatio[0])) : ''}</td>
-    <td class="r num">${ok ? f2(a.bq[0]) + ' / ' + f2(a.bq[1]) : '—'}</td><td>${ok ? pill((a.baRatio[1] * 100).toFixed(0) + '%', baCls(a.baRatio[1])) : ''}</td>
+    <td class="r num">${ok ? f2(a.fq[0]) + ' / ' + f2(a.fq[1]) : '—'}</td><td>${ok ? pill(rp(a.baRatio[0], 0), baCls(a.baRatio[0])) : ''}</td>
+    <td class="r num">${ok ? f2(a.bq[0]) + ' / ' + f2(a.bq[1]) : '—'}</td><td>${ok ? pill(rp(a.baRatio[1], 0), baCls(a.baRatio[1])) : ''}</td>
     <td class="r num">${ivp(a.fIV)}</td><td class="r num">${ivp(a.bIV)}</td><td class="r num" style="color:var(${a.yes ? '--good' : '--bad'})">${a.ivDiff == null ? '—' : (a.ivDiff >= 0 ? '+' : '') + a.ivDiff.toFixed(1)}</td>
     <td>${a.ivDiff == null ? '' : a.yes ? pill('YES', 'p-good') : pill('NO', 'p-bad')}</td><td>${pill(st.lbl, st.cls)}</td><td class="mono muted" style="font-size:11px">${esc(t.screened || '')}</td>
     <td>${t.state === 'ready' ? `<button class="sm" data-go="analyze" data-tk="${t.symbol}">Is / Was →</button>` : `<button class="sm" data-screen="${t.symbol}">Screen</button>`}</td></tr>`}).join('');
@@ -194,8 +195,8 @@ function vScreener() {
    <div class="panel"><div class="ph"><h2>${t.symbol} chain</h2>${tkSelect()}</div>${chainTable(t, a)}
    <div class="legend" style="margin-top:8px"><span><i style="background:var(--warn)"></i>Legs being screened</span><span>E = earnings inside this expiry</span></div></div>
    <div class="panel"><h2 style="margin-bottom:10px">Why ${t.symbol} ${['ok', 'iw'].includes(stage(t).k) ? 'passes' : 'stops here'}</h2>
-    <div class="rule"><span class="pill ${baCls(a.baRatio[0])}">Front</span><span class="mono">${f2(a.fq[1])} ÷ ${f2(a.fq[0])} = ${(a.baRatio[0] * 100).toFixed(1)}%</span></div>
-    <div class="rule" style="margin-top:6px"><span class="pill ${baCls(a.baRatio[1])}">Back</span><span class="mono">${f2(a.bq[1])} ÷ ${f2(a.bq[0])} = ${(a.baRatio[1] * 100).toFixed(1)}%</span></div>
+    <div class="rule"><span class="pill ${baCls(a.baRatio[0])}">Front</span><span class="mono">${f2(a.fq[1])} ÷ ${f2(a.fq[0])} = ${rp(a.baRatio[0], 1)}</span></div>
+    <div class="rule" style="margin-top:6px"><span class="pill ${baCls(a.baRatio[1])}">Back</span><span class="mono">${f2(a.bq[1])} ÷ ${f2(a.bq[0])} = ${rp(a.baRatio[1], 1)}</span></div>
     ${a.ivDiff != null ? `<div class="rule" style="margin-top:6px">${pill('IV', a.yes ? 'p-good' : 'p-bad')}<span class="mono">${ivp(a.fIV)} − ${ivp(a.bIV)} = ${a.ivDiff.toFixed(1)} pts ${a.yes ? '≥' : '<'} ${strat().iv_edge_points}</span></div>` : ''}
     ${t.back_reason ? `<div class="note" style="margin-top:12px">${esc(t.back_reason)}</div>` : ''}
     ${a.error ? `<div class="note" style="margin-top:12px">${esc(a.error)}</div>` : ''}
@@ -301,7 +302,7 @@ function vRisk() {
   const tradesToday = (ST.trades || []).filter(x => x.entry === t.entry).length, lim = limit();
   const auto = [
     ['date', 'Earnings date and time checked', `${fmtD(t.date)} ${t.timing} · ${t.status === 'verified' ? 'two sources agree' : t.status === 'manual' ? 'confirmed by you' : t.status === 'single' ? 'one source only: check the IR page' : 'sources disagree'}`, t.status !== 'conflict'],
-    ['ba', 'Bid-ask screen passed on both legs', `${(a.baRatio[0] * 100).toFixed(0)}% / ${(a.baRatio[1] * 100).toFixed(0)}%`, a.baOverall !== 'fail'],
+    ['ba', 'Bid-ask screen passed on both legs', `${rp(a.baRatio[0], 0)} / ${rp(a.baRatio[1], 0)}`, a.baOverall !== 'fail'],
     ['yn', 'Yes / No term structure', `${a.ivDiff.toFixed(1)} pts front over back`, a.yes],
     ['iw', 'Is / Was supports the trade', `${a.hits}/${a.n} past gaps inside ${pct(a.meg)}`, a.verdict === 'Strong' || a.verdict === 'Acceptable'],
     ['lim', 'Within daily trade limit', `${tradesToday} of ${lim} recorded for ${fmtD(t.entry)}`, tradesToday < lim]];
