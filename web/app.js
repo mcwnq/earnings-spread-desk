@@ -79,7 +79,7 @@ function nav() {
     `<a href="#${v[0]}" class="${cur() === v[0] ? 'on' : ''}"><span class="n">${v[1]}</span><span>${v[2]}</span></a>`).join('');
 }
 function go(v, tk) {if (tk) {S.sel = tk; save()} if (location.hash === '#' + v) render(); else location.hash = v}
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => {S.settingsErr = ''; S.settingsDirty = false; S.ovMsg = ''; render()});
 
 /* ---------- shared bits ---------- */
 const feed = s => `<div class="feed">${s}</div>`;
@@ -453,13 +453,14 @@ function vSettings() {
     <label class="f">Risk-free rate %${num('s-rate', (g.risk_free_rate * 100).toFixed(2), 0.25, 0)}</label>
     <label class="f">Budget per trade ($)${num('s-budget', g.budget, 50, 50)}</label></div></div>
   </div>
-  <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="pri" type="submit">Save settings</button>${S.settingsErr ? `<span class="err">${esc(S.settingsErr)}</span>` : ''}</div></form>`;
+  <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="pri" type="submit">Save settings</button><span id="set-msg" class="${S.settingsOk ? 'muted' : 'err'}">${esc(S.settingsErr)}</span></div></form>`;
 }
 
 /* ---------- render ---------- */
 let renderQueued = false;
 function render() {
   nav();
+  if (cur() === 'settings' && S.settingsDirty) return;   // live updates must not wipe unsaved edits
   const c = ST.connection;
   document.getElementById('clock').innerHTML = `${c.demo ? 'Replay clock' : 'Market clock'}<br><b>${esc(c.clock || '—')}</b><br><span class="conn"><span class="dot ${c.state === 'Connected' ? 'on' : c.state === 'Connecting' ? 'mid' : ''}"></span>TWS ${esc(c.state || '—')}</span>`;
   const M = document.getElementById('main');
@@ -517,7 +518,9 @@ function bind() {
   const cf = M.querySelector('#closef'); if (cf) cf.onsubmit = e => {e.preventDefault(); const v = +M.querySelector('#close-px').value; if (!(v >= 0) || M.querySelector('#close-px').value === '') return;
     document.activeElement.blur(); saveTrades(ST.trades.map(z => z.id === S.exitSel ? {...z, closed: true, close: v} : z))};
   const dt = M.querySelector('#del-trade'); if (dt) dt.onclick = () => saveTrades(ST.trades.filter(z => z.id !== S.exitSel));
-  const sf = M.querySelector('#setf'); if (sf) sf.onsubmit = e => {e.preventDefault(); const s = JSON.parse(JSON.stringify(ST.settings)); const v = id => M.querySelector('#' + id).value, n = id => +v(id);
+  const sf = M.querySelector('#setf');
+  if (sf) sf.oninput = sf.onchange = () => {const m = M.querySelector('#set-msg'); S.settingsErr = 'Unsaved changes'; S.settingsOk = false; S.settingsDirty = true; if (m) {m.textContent = S.settingsErr; m.className = 'err'}};
+  if (sf) sf.onsubmit = e => {e.preventDefault(); const s = JSON.parse(JSON.stringify(ST.settings)); const v = id => M.querySelector('#' + id).value, n = id => +v(id);
     Object.assign(s.connection, {host: v('s-host'), port: n('s-port'), client_id: n('s-cid'), market_data_type: v('s-mdt')});
     s.load.max_lines = n('s-lines');
     Object.assign(s.earnings, {finnhub_api_key: v('s-fh'), days_ahead: n('s-days'), min_market_cap_billions: n('s-cap'), max_symbols_per_day: n('s-maxd'),
@@ -525,7 +528,7 @@ function bind() {
     Object.assign(s.strategy, {ba_pass_percent: n('s-bap'), ba_review_percent: n('s-bar'), iv_edge_points: n('s-edge'), skip_back_iv_points: n('s-skip'),
       screen_days_ahead: n('s-ahead'), screen_minutes: n('s-every'), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'),
       lookback: n('s-lb'), strong_hits: n('s-strong'), acceptable_hits: n('s-acc'), risk_free_rate: n('s-rate') / 100, budget: n('s-budget')});
-    post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; document.activeElement.blur(); resetControls(true); render()})};
+    post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; S.settingsOk = !r.errors; if (!r.errors) S.settingsDirty = false; document.activeElement.blur(); resetControls(true); if (r.errors) {const m = M.querySelector('#set-msg'); if (m) {m.textContent = S.settingsErr; m.className = 'err'}} else render()})};
 }
 function alertMsg(t) {ST.messages.push({time: new Date().toLocaleTimeString(), level: 'warning', text: t}); render()}
 function resetControls(force) {
