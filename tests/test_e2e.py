@@ -102,3 +102,18 @@ def test_no_order_code():
     src = "\n".join(p.read_text() for p in (Path(__file__).parent.parent / "earningsdesk").glob("*.py"))
     for call in ("placeOrder", "cancelOrder", "reqGlobalCancel", "whatIfOrder"):
         assert call not in src
+
+
+def test_after_hours_label():
+    """Outside 9:30-16:00 ET with Live data TWS sends no option bid / ask: say so instead of "Fails bid-ask"."""
+    from earningsdesk.service import App
+    app = App.__new__(App)
+    app.cfg = C.AppConfig()
+    from fixtures import rht_candidate
+    c = {**rht_candidate(), "state": "ready", "quotes_live": False}
+    c["chain"]["20180329"]["C"][155.0]["bid"] = None          # no live bid after the close
+    app.analyze_default(c)
+    assert c["stage"]["k"] == "closed"
+    c2 = {**c, "quotes_live": True}
+    app.analyze_default(c2)
+    assert c2["stage"]["k"] != "closed"
