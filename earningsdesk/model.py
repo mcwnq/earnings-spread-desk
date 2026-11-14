@@ -106,6 +106,36 @@ def quote(chain: dict, expiry: str, right: str, K: float) -> dict | None:
     return ((chain.get(expiry) or {}).get(right) or {}).get(float(K))
 
 
+def pick_back(chain: dict, exps: list[str], K: float, right: str, skip_iv_points: float = 8.0,
+              pass_pct: float = 110.0, review_pct: float = 120.0) -> tuple[str | None, str]:
+    """The long leg (slide 11): the next expiry after the short one, but skip an expiry whose IV is still well above
+    the one after it, and if its market fails the bid-ask screen try the later ones (up to the 3 after it).
+    Takes the first that passes, else the first at "review", else the next expiry. Returns (expiry, why)."""
+    later = exps[1:]
+    if not later:
+        return None, ""
+    notes, ok = [], []
+    for i, e in enumerate(later):
+        q = quote(chain, e, right, K) or {}
+        nxt = quote(chain, later[i + 1], right, K) if i + 1 < len(later) else None
+        label = f"{_d(e):%b %d}"
+        if nxt and q.get("iv") and nxt.get("iv") and (q["iv"] - nxt["iv"]) * 100 >= skip_iv_points:
+            notes.append(f"{label}: IV still {(q['iv'] - nxt['iv']) * 100:.1f} pts above the next expiry")
+            continue
+        b, a = q.get("bid"), q.get("ask")
+        st = ba_status(a / b, pass_pct, review_pct) if (b and a and b > 0 and a > 0) else "fail"
+        ok.append((e, st))
+        if st == "pass":
+            break
+        notes.append(f"{label}: market {'wide (review)' if st == 'review' else 'too wide' if b and a else 'has no quote'}")
+    pick = next((e for e, st in ok if st == "pass"), None) or next((e for e, st in ok if st == "review"), None) \
+        or (ok[0][0] if ok else later[0])
+    if pick == later[0]:
+        return pick, ""
+    skipped = [n for n in notes if not n.startswith(f"{_d(pick):%b %d}")]
+    return pick, "Long leg moved to " + f"{_d(pick):%b %d}" + ". Skipped " + "; ".join(skipped) + "."
+
+
 def verdict_for(hits: int, n: int, p: Params) -> str:
     if n == 0:
         return "n/a"
@@ -131,7 +161,7 @@ def analyze(c: dict, p: Params) -> dict:
     call = right == "C"
     exps = c["expiries"]
     front = p.front or c["front"]
-    back = p.back or c["back"]
+    back = p.back or ((c.get("back_by_right") or {}).get(right) if front == c["front"] else None) or c["back"]
     if back is None or back <= front:
         later = [e for e in exps if e > front]
         back = later[0] if later else None
