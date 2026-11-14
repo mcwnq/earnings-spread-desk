@@ -148,6 +148,16 @@ def make_app(app) -> web.Application:
         app.broadcast({"type": "trades", "trades": rows})
         return json_response({"ok": True})
 
+    @routes.get("/api/screens")
+    async def screens(request):
+        """Screen history from desk.db, newest first: /api/screens?symbol=RHT&limit=100"""
+        sym = (request.query.get("symbol") or "").upper() or None
+        try:
+            limit = max(1, min(5000, int(request.query.get("limit", 500))))
+        except ValueError:
+            limit = 500
+        return web.json_response({"screens": app.store.screens(sym, limit)})
+
     @routes.get("/api/journal.csv")
     async def journal_csv(_):
         return web.Response(text=app.journal.csv(sorted(app.cfg.strategy.exit_checks)), content_type="text/csv",

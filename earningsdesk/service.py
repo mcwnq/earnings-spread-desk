@@ -21,6 +21,7 @@ from .config import MARKET_DATA_TYPES, AppConfig
 from .earnings import EarningsBook
 from .history import past_gaps
 from .journal import Journal
+from .store import Store
 from .timeutil import (add_trading_days, in_entry_window, is_rth, now_et, on_or_after, parse_expiry, sessions,
                        trade_date_for)
 
@@ -128,8 +129,8 @@ class App:
         self._earnings_now = asyncio.Event()
         self._screening: set[str] = set()
         self._stock_ids: dict[str, Contract] = {}
-        self.trades_path = cfg.data_path() / "trades.json"
-        self.journal = Journal(cfg.data_path() / "journal.json")
+        self.store = Store(cfg.data_path() / "desk.db")
+        self.journal = Journal(self.store)
 
     # ------------------------------------------------------------------ messages and broadcast
     def note_requests(self, n: int = 1):
@@ -183,6 +184,7 @@ class App:
         close = getattr(self.book.fetch, "close", None)
         if close:
             await close()
+        self.store.close()
 
     def connected(self) -> bool:
         return self.ib is not None and self.ib.isConnected() and self.connection["state"] == "Connected"
@@ -456,6 +458,10 @@ class App:
         self.analyze_default(c)
         self.broadcast({"type": "cand", "cand": self.public_cand(c)})
         self.maybe_record_entry(c)
+        try:
+            self.store.log_screen(self.clock().strftime("%Y-%m-%d %H:%M:%S"), c, c.get("a"), c.get("a_alt"))
+        except Exception:  # noqa: BLE001
+            log.exception("saving screen %s", symbol)
 
     def maybe_record_entry(self, c: dict):
         """Forward test: keep the latest last-hour screen of today's entries (see journal.py)."""
@@ -619,13 +625,10 @@ class App:
 
     # ------------------------------------------------------------------ trades log (manual, for the exit page)
     def trades(self) -> list[dict]:
-        try:
-            return json.loads(self.trades_path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            return []
+        return self.store.trades()
 
     def save_trades(self, rows: list[dict]):
-        self.trades_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        self.store.save_trades(rows)
 
     async def quote_legs(self, legs: list[dict]) -> list[dict]:
         if not self.connected():

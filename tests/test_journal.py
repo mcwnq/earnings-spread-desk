@@ -7,6 +7,7 @@ import pytest
 from earningsdesk import config as C
 from earningsdesk import demo as D
 from earningsdesk.journal import Journal, exit_quote
+from earningsdesk.store import Store
 from earningsdesk.service import App
 from earningsdesk.timeutil import ET
 from fixtures import rht_candidate
@@ -25,7 +26,7 @@ def test_exit_quote_course_example():
 
 
 def test_journal_entry_due_and_csv(tmp_path):
-    j = Journal(tmp_path / "journal.json")
+    j = Journal(Store(tmp_path / "desk.db"))
     c = rht_candidate()
     c.update(date="2018-03-26", timing="AMC", stage={"k": "ok", "lbl": "Strong"})
     c["a"] = M.analyze(c, M.Params(rate=0.02))
@@ -42,7 +43,7 @@ def test_journal_entry_due_and_csv(tmp_path):
     assert j.due("2018-03-27", "11:30", checks)[0][1] == "11:00"     # 09:45 missed by >1h: skipped, 11:00 due
     assert j.due("2018-03-28", "09:50", checks) == []
     j.record_exit(rec["id"], "13:30", 154.26, {"C": ({"bid": 1.60, "ask": 2.10}, {"bid": 2.80, "ask": 3.60})}, now)
-    again = Journal(tmp_path / "journal.json").get(rec["id"])
+    again = Journal(Store(tmp_path / "desk.db")).get(rec["id"])
     assert again["exits"]["13:30"]["sides"]["C"]["pnl"] == pytest.approx(35.0)
     assert again["exits"]["13:30"]["move"] == pytest.approx(0.76, abs=0.005)
     assert j.record_entry(c, now)["exits"]                               # a later screen no longer replaces it
@@ -84,6 +85,30 @@ def test_forward_test_end_to_end(tmp_path):
             assert rht["exits"]["09:45"]["sides"]["P"]["offer"] is not None
             assert "09:45" in app.journal.get("2018-03-26|PAYX")["exits"]
             assert "11:00" not in rht["exits"]
+            # the database has the same, in query columns
+            db = app.store.db
+            assert db.execute("SELECT COUNT(*) FROM journal_sides WHERE record_id='2018-03-26|RHT'").fetchone()[0] == 2
+            pnl = db.execute("SELECT pnl FROM journal_exits WHERE record_id='2018-03-26|RHT' AND check_time='09:45'"
+                             " AND side='P'").fetchone()[0]
+            assert pnl == rht["exits"]["09:45"]["sides"]["P"]["pnl"]
+            assert {r["symbol"] for r in app.store.screens()} >= {"RHT", "PAYX"}
+            assert app.store.screens("RHT")[0]["side"] == "P"
         finally:
             await app.shutdown()
     asyncio.run(run())
+
+
+def test_old_json_files_are_imported_once(tmp_path):
+    import json
+    rec = {"id": "2018-03-26|RHT", "symbol": "RHT", "entry_date": "2018-03-26", "exit_date": "2018-03-27",
+           "default_right": "C", "sides": {"C": {"K": 155.0, "entry": 0.7, "fq": [1, 2], "bq": [3, 4]}},
+           "exits": {"13:30": {"at": "13:30:01", "S": 154.26, "sides": {"C": {"offer": 1.05, "pnl": 35.0}}}}}
+    (tmp_path / "journal.json").write_text(json.dumps([rec]))
+    (tmp_path / "trades.json").write_text(json.dumps([{"id": "a", "symbol": "RHT", "debit": 0.7}]))
+    st = Store(tmp_path / "desk.db")
+    assert st.journal_records() == [rec] and st.trades()[0]["symbol"] == "RHT"
+    assert (tmp_path / "journal.json.imported").exists() and not (tmp_path / "journal.json").exists()
+    assert st.db.execute("SELECT pnl FROM journal_exits").fetchone()[0] == 35.0
+    st.close()
+    st = Store(tmp_path / "desk.db")                    # second start: nothing doubled
+    assert len(st.journal_records()) == 1 and len(st.trades()) == 1
