@@ -75,6 +75,9 @@ class Params:
     crush_mode: str = "mult"
     crush_percent: float = 80.0
     back_iv_change_percent: float = 0.0
+    haircut_percent: float = 85.0     # crush_mode target: share of each leg's IV above the target that comes out
+    hv: float | None = None           # crush_mode target inputs (decimals); default: the candidate's own
+    iv_low: float | None = None
     gap_basis: str = "avg"
     debit: float | None = None
     rate: float = 0.04
@@ -88,6 +91,7 @@ class Params:
     @classmethod
     def from_strategy(cls, s, **over) -> "Params":
         p = cls(crush_mode=s.crush_mode, crush_percent=s.crush_percent, back_iv_change_percent=s.back_iv_change_percent,
+                haircut_percent=s.haircut_percent,
                 gap_basis=s.gap_basis, rate=s.risk_free_rate, ba_pass_percent=s.ba_pass_percent,
                 ba_review_percent=s.ba_review_percent, iv_edge_points=s.iv_edge_points, strong_hits=s.strong_hits,
                 acceptable_hits=s.acceptable_hits, lookback=s.lookback)
@@ -104,6 +108,16 @@ def _d(s: str) -> date:
 def quote(chain: dict, expiry: str, right: str, K: float) -> dict | None:
     """chain[expiry][right][strike] = {"bid", "ask", "iv" (decimal), ...}"""
     return ((chain.get(expiry) or {}).get(right) or {}).get(float(K))
+
+
+def target_vol(bIV: float, hv: float | None, iv_low: float | None) -> float:
+    """The course spreadsheet's Target Vol: MIN(back vol bottom-out, HV, back IV - 1 point)."""
+    return min([x for x in (iv_low, hv) if x and x > 0] + [bIV - 0.01])
+
+
+def crush_to_target(iv: float, target: float, haircut_percent: float = 85.0) -> float:
+    """IV after earnings = IV - (IV - target) x haircut (spreadsheet: Short / Long Vol Crush, haircut 0.85)."""
+    return iv - (iv - target) * haircut_percent / 100 if iv > target else iv
 
 
 STRIKE_RULES = ("call_above", "nearest_otm")
@@ -209,9 +223,15 @@ def analyze(c: dict, p: Params) -> dict:
     ivDiff = (fIV - bIV) * 100
     out.update(ivDiff=ivDiff, yes=ivDiff >= p.iv_edge_points - 1e-9)
 
-    crush = p.crush_percent / 100
-    fIV1 = fIV * crush if p.crush_mode == "mult" else fIV - crush * (fIV - bIV)
-    bIV1 = bIV * (1 + p.back_iv_change_percent / 100)
+    if p.crush_mode == "target":
+        t = target_vol(bIV, p.hv if p.hv is not None else c.get("hv"), p.iv_low if p.iv_low is not None else c.get("iv_low"))
+        fIV1, bIV1 = crush_to_target(fIV, t, p.haircut_percent), crush_to_target(bIV, t, p.haircut_percent)
+        out.update(target=t, hv=p.hv if p.hv is not None else c.get("hv"),
+                   iv_low=p.iv_low if p.iv_low is not None else c.get("iv_low"))
+    else:
+        crush = p.crush_percent / 100
+        fIV1 = fIV * crush if p.crush_mode == "mult" else fIV - crush * (fIV - bIV)
+        bIV1 = bIV * (1 + p.back_iv_change_percent / 100)
     e0, e1 = date.fromisoformat(c["entry"]), date.fromisoformat(c["model"])
     fd, bd = _d(front), _d(back)
     tf0, tb0 = (fd - e0).days / 365, (bd - e0).days / 365
@@ -238,6 +258,11 @@ def analyze(c: dict, p: Params) -> dict:
         dist = min(dLo, dHi) if p.gap_basis == "near" else (dLo + dHi) / 2
     else:
         dist = None
+    at_S = (bs(S, K, tb1, bIV1, call, r) - bs(S, K, tf1, fIV1, call, r) - debit) * 100
+    no_profit = at_S <= 0
+    if no_profit:
+        # the modeled spread already loses money the day after with no move at all: it endures no gap
+        dist = 0.0
     meg = dist / S * 100 if dist is not None else None
     gaps = c.get("gaps", [])[: p.lookback]
     gp = [g["gap"] for g in gaps]
@@ -248,7 +273,7 @@ def analyze(c: dict, p: Params) -> dict:
                hits=hits, n=len(gp), med=med, verdict=verdict, maxGain=max(q[2] for q in pts),
                straddle=meg is not None and med is not None and meg < med,
                daysFront=(fd - e1).days, daysBack=(bd - e1).days, daysFront0=(fd - e0).days, daysBack0=(bd - e0).days,
-               ok=True)
+               ok=True, noProfit=no_profit)
     out["straddleQuote"] = straddle(c, front, S, gp)
     return out
 

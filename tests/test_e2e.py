@@ -61,12 +61,18 @@ def test_sample_week_end_to_end(tmp_path):
         st = await r.json()
         assert st["connection"]["state"] == "Connected" and len(st["cands"]) == 8
         assert "finnhub_api_key" in st["settings"]["earnings"] and st["settings"]["earnings"]["finnhub_api_key"] == "********"
-        # the course trade: RHT 155 call calendar, 0.70 entry, Strong
-        r = await client.post("/api/analyze", json={"symbol": "RHT", "K": 155})
+        # the course trade: RHT 155 call calendar, 0.70 entry, Strong with the front IV x 80% crush
+        r = await client.post("/api/analyze", json={"symbol": "RHT", "K": 155, "crush_mode": "mult"})
         a = await r.json()
         assert a["right"] == "C" and a["entry"] == pytest.approx(0.70) and a["verdict"] == "Strong" and a["hits"] == 6
-        r = await client.post("/api/analyze", json={"symbol": "RHT", "K": 155, "crush_percent": 100})
+        r = await client.post("/api/analyze", json={"symbol": "RHT", "K": 155, "crush_mode": "mult", "crush_percent": 100})
         assert (await r.json())["fIV1"] == pytest.approx(0.845)
+        # the course spreadsheet's target-vol crush, with HV from the bars and the 6-month IV low from IBKR
+        assert c["RHT"]["hv"] and c["RHT"]["iv_low"] and app.ib.kinds.get("reqHistoricalData", 0) >= 16
+        r = await client.post("/api/analyze", json={"symbol": "RHT", "K": 155, "crush_mode": "target"})
+        a = await r.json()
+        assert a["target"] == pytest.approx(min(c["RHT"]["hv"], c["RHT"]["iv_low"], a["bIV"] - 0.01))
+        assert a["bIV1"] < a["bIV"] and a["fIV1"] < 0.845
 
         # confirm FINL's date by hand: it becomes usable
         r = await client.post("/api/earnings/override", json={"symbol": "FINL", "date": "2018-03-29", "timing": "BMO"})

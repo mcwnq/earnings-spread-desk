@@ -19,7 +19,7 @@ from . import config as config_mod
 from . import model as M
 from .config import MARKET_DATA_TYPES, AppConfig
 from .earnings import EarningsBook
-from .history import past_gaps
+from .history import historical_vol, past_gaps
 from .journal import Journal
 from .store import Store
 from .timeutil import (add_trading_days, in_entry_window, is_rth, now_et, on_or_after, parse_expiry, sessions,
@@ -433,6 +433,30 @@ class App:
         p.write_text(json.dumps({"fetched": today, "bars": bars}), encoding="utf-8")
         return bars
 
+    async def iv_low(self, stock: Contract) -> float | None:
+        """The course spreadsheet's "Back Vol Bottom Out": the lowest the stock's 30-day implied volatility has been
+        in the last 6 months (IBKR OPTION_IMPLIED_VOLATILITY daily bars), kept on disk and fetched once a day."""
+        sym = stock.symbol
+        folder = self.cfg.data_path() / "cache" / "iv"
+        folder.mkdir(parents=True, exist_ok=True)
+        p = folder / f"{sym}.json"
+        today = self.clock().date().isoformat()
+        if p.exists():
+            try:
+                hit = json.loads(p.read_text(encoding="utf-8"))
+                if hit.get("fetched") == today:
+                    return hit["low"]
+            except Exception:  # noqa: BLE001
+                pass
+        await self.hist_limit.wait()
+        self.note_requests()
+        raw = await self._ask(self.ib.reqHistoricalDataAsync(stock, "", "6 M", "1 day", "OPTION_IMPLIED_VOLATILITY",
+                                                             True, 1), f"{sym} implied volatility history", 90)
+        vals = [b.close for b in (raw or []) if b.close and 0 < b.close < 10]
+        low = min(vals) if vals else None
+        p.write_text(json.dumps({"fetched": today, "low": low}), encoding="utf-8")
+        return low
+
     async def screen(self, symbol: str):
         c = self.cands.get(symbol)
         if c is None or symbol in self._screening:
@@ -573,6 +597,7 @@ class App:
 
         try:
             bars = await self.bars(stock)
+            c["hv"] = historical_vol(bars, 30)
             known = await self.book.past_dates(sym, date.fromisoformat(c["date"]), st.lookback + 2)
             c["gaps"] = past_gaps(bars, date.fromisoformat(c["date"]), c["timing"], known, st.lookback)
             inferred = sum(1 for g in c["gaps"] if g.get("source") == "inferred")
@@ -580,6 +605,11 @@ class App:
                              "gap near the expected date (no source listed them)." if inferred else "")
         except ScreenError as e:
             c["gaps"], c["gap_note"] = [], f"No gap history: {e}"
+        try:
+            c["iv_low"] = await self.iv_low(stock)
+        except Exception as e:  # noqa: BLE001
+            log.info("%s IV history: %s", sym, e)
+            c["iv_low"] = None
 
     def pick_back(self, c: dict, right: str | None = None) -> tuple[str | None, str]:
         st = self.cfg.strategy
@@ -635,7 +665,8 @@ class App:
         c = self.cands.get(symbol)
         if c is None or not c.get("chain"):
             return {"error": f"{symbol} has no option data yet."}
-        over = {k: body.get(k) for k in ("K", "right", "front", "back", "crush_mode", "crush_percent",
+        over = {k: body.get(k) for k in ("K", "right", "front", "back", "crush_mode", "crush_percent", "haircut_percent",
+                                         "hv", "iv_low",
                                          "back_iv_change_percent", "gap_basis", "debit")}
         if over["K"] is not None:
             over["K"] = float(over["K"])

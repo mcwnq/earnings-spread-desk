@@ -165,3 +165,23 @@ def test_pick_back_keeps_review_leg():
              "20180406": {"C": {155.0: {"bid": 4.2, "ask": 4.7, "iv": .499}}},
              "20180413": {"C": {155.0: {"bid": 4.9, "ask": 5.1, "iv": .46}}}}
     assert M.pick_back(chain, ["20180329", "20180406", "20180413"], 155.0, "C") == ("20180406", "")
+
+
+def test_target_vol_crush_matches_course_spreadsheet():
+    # EXPE row of the course's TED trade journal: back-vol bottom-out 45.3, HV 36, front 169.73, back 87.95
+    t = M.target_vol(0.8795, hv=0.36, iv_low=0.453)
+    assert t == pytest.approx(0.36)
+    assert M.crush_to_target(1.6973, t) == pytest.approx(0.560595)       # Short Vol Target 56.06
+    assert M.crush_to_target(0.8795, t) == pytest.approx(0.437925)       # Long Vol Target 43.79
+    assert M.target_vol(0.30, hv=0.36, iv_low=None) == pytest.approx(0.29)   # back IV - 1 point is the cap
+    assert M.crush_to_target(0.25, 0.29) == 0.25                         # never raised
+
+
+def test_analyze_target_mode_crushes_both_legs():
+    c = rht_candidate()
+    c.update(hv=0.40, iv_low=0.35)
+    a = M.analyze(c, M.Params(rate=0.02, K=155.0, right="C", crush_mode="target"))
+    assert a["target"] == pytest.approx(0.35)
+    assert a["fIV1"] == pytest.approx(0.845 - (0.845 - 0.35) * 0.85)
+    assert a["bIV1"] == pytest.approx(0.499 - (0.499 - 0.35) * 0.85)
+    assert a["meg"] is not None

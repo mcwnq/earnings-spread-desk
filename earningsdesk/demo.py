@@ -112,7 +112,7 @@ def make_bars(sym: str) -> list[dict]:
         nxt = min((p for p in pts if p[0] >= i), default=pts[-1])
         w = 0 if nxt[0] == prev[0] else (i - prev[0]) / (nxt[0] - prev[0])
         base = prev[1] + (nxt[1] - prev[1]) * w
-        wiggle = 0.012 * math.sin(math.pi * w) * (_h(sym, dd, "w") - 0.5)
+        wiggle = 0.05 * math.sin(math.pi * w) * (_h(sym, dd, "w") - 0.5)
         close = math.exp(base + wiggle)
         a = anchors.get(dd, {})
         if "close" in a:
@@ -256,6 +256,10 @@ class FakeIB:
                                      formatDate=1, keepUpToDate=False, chartOptions=(), timeout=60):
         self._count("reqHistoricalData")
         await asyncio.sleep(0.01)
+        if whatToShow == "OPTION_IMPLIED_VOLATILITY":     # 6 months of 30-day IV: low at 70% of the long-leg IV
+            base = TICKERS[contract.symbol][5][-1] / 100
+            return [BarData(date=f"d{i}", open=0, high=0, low=0, close=base * (0.85 + 0.15 * math.cos(i / 9)),
+                            volume=0, average=0, barCount=0) for i in range(126)]
         return [BarData(date=b["date"], open=b["open"], high=max(b["open"], b["close"]), low=min(b["open"], b["close"]),
                         close=b["close"], volume=1e6, average=b["close"], barCount=1000) for b in make_bars(contract.symbol)]
 

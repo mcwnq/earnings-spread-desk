@@ -59,8 +59,11 @@ Without a Finnhub key every date is "1 source". It still works, but check those 
   call and put calendars side by side, and the screener shows how the other side would rate.
 * **Bid-ask.** Ask ≤ 110% of bid on both legs passes, up to 120% is "review", and above that fails.
 * **Yes / No.** Front IV must be ≥ back IV + 2 points.
-* **Is / Was.** Black-Scholes value of the calendar on the exit day, with front IV × 80% ("retrace premium" is an
-  option). The endurable gap is the breakeven distance ÷ price, using the average of both breakevens or the nearer one.
+* **Is / Was.** Black-Scholes value of the calendar on the exit day. The default crush is the course spreadsheet's
+  target-vol model: target = lowest of the 6-month low of the stock's 30-day IV ("back vol bottom-out", from IBKR),
+  30-day historical volatility (from the daily bars) and back IV − 1 point; each leg then loses 85% of its IV above the
+  target (Settings › haircut). Front IV × 80% and "retrace premium" are options. A spread that loses money the day after
+  even with no move has an endurable gap of 0. The endurable gap is the breakeven distance ÷ price, using the average of both breakevens or the nearer one.
   Strong means 6 or more of the last 7 gaps were smaller; Acceptable means 5. The thresholds scale when there are fewer
   past gaps.
 * **Rank.** Candidates are ranked by hits, then by how far the endurable gap is above the median gap. You trade 1 per

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 MARKET_DATA_TYPES = {"Live": 1, "Frozen": 2, "Delayed": 3, "DelayedFrozen": 4}
-CRUSH_MODES = ["mult", "retrace"]   # front IV x %, or give back % of the front-over-back premium
+CRUSH_MODES = ["mult", "retrace", "target"]   # front IV x %, or give back % of the front-over-back premium
 STRIKE_RULES = ["call_above", "nearest_otm"]
 GAP_BASES = ["avg", "near"]         # endurable gap from the average of both breakevens, or the nearer one
 
@@ -44,9 +44,10 @@ class StrategyConfig:
     ba_pass_percent: float = 110.0    # ask may be at most this % of bid on both legs
     ba_review_percent: float = 120.0  # between pass and this: review; above: fail
     iv_edge_points: float = 2.0       # Yes/No: front IV must be this many points above back IV
-    crush_mode: str = "mult"
+    crush_mode: str = "target"         # course spreadsheet: both legs crushed toward the target vol
     crush_percent: float = 80.0       # front IV after earnings = front IV x 80% (crush_mode mult)
     back_iv_change_percent: float = 0.0
+    haircut_percent: float = 85.0     # crush_mode target (course spreadsheet): both legs lose 85% of IV above target
     gap_basis: str = "avg"
     strike_rule: str = "call_above"   # call_above: nearest call at/above price (course trade); nearest_otm (spreadsheet)
     lookback: int = 7                 # past announcements compared in Is/Was
@@ -157,7 +158,9 @@ def validate(cfg: AppConfig) -> list[str]:
     if not (1 <= l.requests_per_second <= 50):
         e.append("Requests per second must be between 1 and 50 (IBKR's limit).")
     if s.crush_mode not in CRUSH_MODES:
-        e.append("Crush mode must be mult or retrace.")
+        e.append("Crush mode must be mult, retrace or target.")
+    if not (10 <= s.haircut_percent <= 100):
+        e.append("Haircut must be between 10% and 100%.")
     if s.strike_rule not in STRIKE_RULES:
         e.append("Default strike must be call_above or nearest_otm.")
     if s.gap_basis not in GAP_BASES:
