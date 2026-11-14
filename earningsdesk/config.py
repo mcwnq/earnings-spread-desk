@@ -8,6 +8,7 @@ from pathlib import Path
 
 MARKET_DATA_TYPES = {"Live": 1, "Frozen": 2, "Delayed": 3, "DelayedFrozen": 4}
 CRUSH_MODES = ["mult", "retrace"]   # front IV x %, or give back % of the front-over-back premium
+STRIKE_RULES = ["call_above", "nearest_otm"]
 GAP_BASES = ["avg", "near"]         # endurable gap from the average of both breakevens, or the nearer one
 
 
@@ -47,6 +48,7 @@ class StrategyConfig:
     crush_percent: float = 80.0       # front IV after earnings = front IV x 80% (crush_mode mult)
     back_iv_change_percent: float = 0.0
     gap_basis: str = "avg"
+    strike_rule: str = "call_above"   # call_above: nearest call at/above price (course trade); nearest_otm (spreadsheet)
     lookback: int = 7                 # past announcements compared in Is/Was
     strong_hits: int = 6
     acceptable_hits: int = 5
@@ -156,6 +158,8 @@ def validate(cfg: AppConfig) -> list[str]:
         e.append("Requests per second must be between 1 and 50 (IBKR's limit).")
     if s.crush_mode not in CRUSH_MODES:
         e.append("Crush mode must be mult or retrace.")
+    if s.strike_rule not in STRIKE_RULES:
+        e.append("Default strike must be call_above or nearest_otm.")
     if s.gap_basis not in GAP_BASES:
         e.append("Endurable gap basis must be avg or near.")
     if not (10 <= s.crush_percent <= 100):

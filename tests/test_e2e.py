@@ -47,9 +47,11 @@ def test_sample_week_end_to_end(tmp_path):
         # the Apr 06 long leg is too wide for PAYX, so the screen moves to Apr 13
         assert c["PAYX"]["back"] == "20180413" and "Apr 06: market too wide" in c["PAYX"]["back_reason"]
         assert c["PAYX"]["a"]["back"] == "20180413" and c["PAYX"]["a"]["baOverall"] != "fail"
-        # both calendars at the default strike: RHT 152.5 is a put by default, the call is the course's slide quotes
-        assert c["RHT"]["a"]["right"] == "P" and c["RHT"]["a_alt"]["right"] == "C"
-        assert c["RHT"]["a_alt"]["fq"] == [5.00, 5.30] and c["RHT"]["a_alt"]["bq"] == [5.60, 6.00]
+        # default strike as the course traded it: the nearest call at or above the price, RHT 155C at 153.09
+        assert c["RHT"]["K"] == 155.0 and c["RHT"]["a"]["right"] == "C" and c["RHT"]["a_alt"]["right"] == "P"
+        assert c["RHT"]["a"]["fq"] == [3.80, 4.00] and c["RHT"]["a"]["bq"] == [4.20, 4.70]
+        assert c["RHT"]["a"]["entry"] == pytest.approx(0.70) and c["RHT"]["a_alt"]["K"] == 155.0
+        assert {(x["K"], x["right"]) for x in c["RHT"]["by_strike"]} >= {(152.5, "P"), (155.0, "C"), (157.5, "C")}
         assert all(g["source"] == "inferred" for g in c["CTAS"]["gaps"])
         assert c["PVH"]["stage"]["lbl"] == "Straddle candidate"
         assert c["MKC"]["stage"]["k"] == "yn"
@@ -92,6 +94,11 @@ def test_sample_week_end_to_end(tmp_path):
         assert app.cfg.strategy.crush_percent == 70 and app.cfg.earnings.finnhub_api_key == "demo"
         saved = json.loads((tmp_path / "settings.json").read_text())
         assert saved["strategy"]["crush_percent"] == 70
+        # the spreadsheet's strike rule: nearest strike, OTM side -> RHT 152.5 put, from the same quotes
+        s["strategy"]["strike_rule"] = "nearest_otm"
+        assert (await client.post("/api/settings", json=s)).status == 200
+        assert app.cands["RHT"]["K"] == 152.5 and app.cands["RHT"]["a"]["right"] == "P"
+        s["strategy"]["strike_rule"] = "call_above"
         s["strategy"]["gap_basis"] = "median"
         assert (await client.post("/api/settings", json=s)).status == 400
 

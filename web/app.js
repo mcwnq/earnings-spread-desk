@@ -208,7 +208,7 @@ function vScreener() {
   return `${banner()}<div class="head"><div><h1>2–3 · Bid-ask and Yes / No screens</h1><p>Both legs must quote with the ask no more than ${strat().ba_pass_percent}% of the bid. Then the front (earnings) expiry must carry IV at least ${strat().iv_edge_points} points above the long expiry. A YES moves on to Is / Was.</p></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${pill('≤' + strat().ba_pass_percent + '% pass', 'p-good')}${pill(strat().ba_pass_percent + '–' + strat().ba_review_percent + '% review', 'p-warn')}${pill('>' + strat().ba_review_percent + '% fail', 'p-bad')}<button class="sm" data-screen="">Screen all now</button></div></div>
   <div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Ticker</th><th>Report</th><th class="r">Last</th><th>Strike</th><th>Expiries</th><th class="r">Front</th><th>Ask/bid</th><th class="r">Back</th><th>Ask/bid</th><th class="r">Front IV</th><th class="r">Back IV</th><th class="r">Δ pts</th><th>Yes/No</th><th>Status</th><th>Other side</th><th>At</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="17" class="empty">No announcements loaded yet.</td></tr>'}</tbody></table></div>
-  ${feed('IBKR snapshots (reqMktData until bid, ask and model IV arrive) · calls and puts at the 4 strikes nearest the price · default side = out of the money · long leg = next expiry; if its IV is still high or its market fails, the next 3 are tried')}</div>
+  ${feed('IBKR snapshots (reqMktData until bid, ask and model IV arrive) · calls and puts at the 4 strikes nearest the price · default strike per Settings (course trade: nearest call at or above the price), other side at the same strike · long leg = next expiry; if its IV is still high or its market fails, the next 3 are tried')}</div>
   ${list.some(x => x.quotes_live === false) ? `<div class="note" style="margin-top:14px"><b>Screened after the close.</b> TWS sends no live option bid / ask outside 9:30–16:00 ET, so the bid-ask screen can't be judged. Screen again during the last hour, or set Market data to Frozen in Settings to use the closing quotes.</div>` : ''}
   ${t && t.state === 'ready' && a.fq ? `<div class="grid g2" style="margin-top:14px">
    <div class="panel"><div class="ph"><h2>${t.symbol} chain</h2>${tkSelect()}</div>${chainTable(t, a)}
@@ -281,7 +281,27 @@ function sideBySide(t, a) {
   return `<div class="panel"><div class="ph"><h2>Call vs put calendar · ${a.K}</h2><span class="muted" style="font-size:12px">same strike, same crush</span></div>
    <div class="tbl-wrap"><table><thead><tr><th></th><th class="r">${a.right === 'C' ? '<b>Call</b>' : 'Call'}</th><th class="r">${a.right === 'P' ? '<b>Put</b>' : 'Put'}</th></tr></thead><tbody>
    ${rows.map(([l, f]) => `<tr><td>${l}</td><td class="r num">${cell(C, f)}</td><td class="r num">${cell(P, f)}</td></tr>`).join('')}</tbody></table></div>
-   <p class="muted" style="font-size:12px;margin:8px 0 0">The default side is the out-of-the-money one at this strike: a call when the strike is at or above the price, a put below it.</p></div>`;
+   <p class="muted" style="font-size:12px;margin:8px 0 0">${strat().strike_rule === 'nearest_otm' ? 'The default is the nearest strike on its out-of-the-money side (the course spreadsheet).' : 'The default is the course trade: the nearest call at or above the price (RHT at 153.09 → 155C).'} The other side is at the same strike. Change it in Settings.</p></div>`;
+}
+function ivByStrike(t, a) {
+  // the Is / Was screen at every nearby strike, both sides (computed by the app at your settings' crush)
+  const rows = (t.by_strike || []).filter(x => x.fIV != null || x.error);
+  if (!rows.length) return '';
+  const top = f => {const v = rows.map(x => x[f]).filter(x => x != null); return v.length && Math.max(...v) - Math.min(...v) > 0.0005 ? Math.max(...v) : null};
+  const hi = {fIV: top('fIV'), ivDiff: top('ivDiff'), meg: top('meg')};
+  const g = (x, f, txt) => x[f] == null ? '—' : hi[f] != null && Math.abs(x[f] - hi[f]) < 1e-9 ? `<b style="color:var(--good)">${txt}</b>` : txt;
+  const vp = (txt, v) => pill(txt, v === 'Strong' ? 'p-good' : v === 'Acceptable' ? 'p-warn' : 'p-bad');
+  const shown = x => Math.abs(x.K - a.K) < 1e-6 && x.right === a.right;
+  return `<div class="ph"><h2>Strikes compared · ${fmtE(a.front)} short</h2><span class="muted" style="font-size:12px">highest IV, IV edge and endurable gap in green</span></div>
+   <div class="tbl-wrap"><table><thead><tr><th>Strike</th><th>Side</th><th class="r">Front IV</th><th class="r">Long IV</th><th class="r">Edge</th><th class="r">Bid-ask</th><th class="r">Debit</th><th class="r">Endurable</th><th class="r">Inside</th></tr></thead><tbody>
+   ${rows.map(x => `<tr class="${shown(x) ? '' : 'clickable'}" data-strike="${x.K}" data-sright="${x.right}"${shown(x) ? ' style="background:var(--c-grid)"' : ''}>
+     <td class="num">${x.K}${Math.abs(x.K - t.K) < 1e-6 ? ' <span class="muted">default</span>' : ''}</td><td>${x.right === 'C' ? 'Call' : 'Put'} <span class="muted">${fmtE(x.back)}</span></td>
+     <td class="r num">${g(x, 'fIV', ivp(x.fIV))}</td><td class="r num">${ivp(x.bIV)}</td>
+     <td class="r num">${g(x, 'ivDiff', x.ivDiff == null ? '' : (x.ivDiff >= 0 ? '+' : '') + x.ivDiff.toFixed(1))}</td>
+     <td class="r num">${x.baRatio ? rp(Math.max(...x.baRatio.filter(v => v != null))) : '—'}</td>
+     <td class="r num">${x.entry != null ? usd(x.entry) : '—'}</td><td class="r num">${g(x, 'meg', pct(x.meg))}</td>
+     <td class="r num" title="${esc(x.verdict || '')}">${x.n ? vp(x.hits + '/' + x.n, x.verdict) : '—'}</td></tr>`).join('')}</tbody></table></div>
+   <p class="muted" style="font-size:12px;margin:8px 0 0">Click a row to model that strike above. Inside = past gaps inside the endurable gap, coloured by verdict. Edge = front IV − long-leg IV in points. Bid-ask = the wider leg. Shaded = the spread shown above.</p>`;
 }
 function vAnalyze() {
   const t = sel();
@@ -291,7 +311,7 @@ function vAnalyze() {
   const fronts = t.expiries || [], backs = fronts.filter(e => e > a.front);
   const ivAt = e => {const r = a.right; const x = q(t, e, r, a.K); return x && x.iv ? ' · IV ' + ivp(x.iv) : ''};
   const ctrls = `<div class="panel"><div class="ctrls">
-    <label class="f" for="k-sel">Strike<select id="k-sel">${(t.strikes || []).map(k => `<option value="${k}" ${Math.abs(k - a.K) < 1e-6 ? 'selected' : ''}>${k}${Math.abs(k - t.S) === Math.min(...(t.strikes || []).map(z => Math.abs(z - t.S))) ? ' · nearest' : ''}</option>`).join('')}</select></label>
+    <label class="f" for="k-sel">Strike<select id="k-sel">${(t.strikes || []).map(k => `<option value="${k}" ${Math.abs(k - a.K) < 1e-6 ? 'selected' : ''}>${k}${Math.abs(k - t.S) === Math.min(...(t.strikes || []).map(z => Math.abs(z - t.S))) ? ' · nearest' : ''}${Math.abs(k - t.K) < 1e-6 ? ' · default' : ''}</option>`).join('')}</select></label>
     <label class="f">Calendar<span class="seg"><button data-right="C" class="${a.right === 'C' ? 'on' : ''}">Call</button><button data-right="P" class="${a.right === 'P' ? 'on' : ''}">Put</button></span></label>
     <label class="f" for="f-sel">Short expiry<select id="f-sel">${fronts.slice(0, -1).map(f => `<option value="${f}" ${f === a.front ? 'selected' : ''}>${fmtE(f)}${ivAt(f)}${f === t.front ? ' · E' : ''}</option>`).join('')}</select></label>
     <label class="f" for="b-sel">Long expiry<select id="b-sel">${backs.map(b => `<option value="${b}" ${b === a.back ? 'selected' : ''}>${fmtE(b)}${ivAt(b)}</option>`).join('')}</select></label>
@@ -308,7 +328,8 @@ function vAnalyze() {
    <div class="panel"><div class="ph"><h2>${t.symbol} ${a.K} ${a.call ? 'call' : 'put'} calendar · ${fmtE(a.front)} / ${fmtE(a.back)} · debit ${usd(a.debit)}</h2>
      <div class="legend"><span><i style="background:var(--c-front)"></i>Today (${fmtD(t.entry)})</span><span><i style="background:var(--c-fwd)"></i>Day after (${fmtD(t.model)}), crushed</span><span><i style="background:var(--accent);opacity:.25;height:8px"></i>Endurable zone</span></div></div>
      ${pnlChart(t, a)}
-     ${feed(`Black-Scholes, r=${(strat().risk_free_rate * 100).toFixed(1)}% · front ${ivp(a.fIV)}→${ivp(a.fIV1)} IV, ${a.daysFront}d left · back ${ivp(a.bIV)}→${ivp(a.bIV1)} IV, ${a.daysBack}d left · per spread ×100 · IV = IBKR model IV per leg`)}</div>
+     ${feed(`Black-Scholes, r=${(strat().risk_free_rate * 100).toFixed(1)}% · front ${ivp(a.fIV)}→${ivp(a.fIV1)} IV, ${a.daysFront}d left · back ${ivp(a.bIV)}→${ivp(a.bIV1)} IV, ${a.daysBack}d left · per spread ×100 · IV = IBKR model IV per leg`)}
+     <div style="margin-top:14px">${ivByStrike(t, a)}</div></div>
    <div class="grid" style="align-content:start">
     <div class="verdict ${vb}"><div><div class="big">${a.verdict}</div><div style="font-size:12.5px">${a.hits} of ${a.n} past gaps were smaller than ${pct(a.meg)}.${a.straddle ? ' The endurable gap is below the median gap, so check the straddle playbook.' : ''}</div></div></div>
     ${a.front !== t.front ? `<div class="note"><b>Short leg is not the earnings expiry.</b> The course shorts the first expiry after earnings (${fmtE(t.front)}), so the short option carries the IV that gets crushed.</div>` : ''}
@@ -525,6 +546,7 @@ function vSettings() {
    <div class="panel"><h2>Is / Was</h2><div class="ctrls" style="margin-top:10px">
     <label class="f">Crush<select id="s-cm"><option value="mult" ${g.crush_mode === 'mult' ? 'selected' : ''}>Front IV × %</option><option value="retrace" ${g.crush_mode === 'retrace' ? 'selected' : ''}>Retrace premium</option></select></label>
     <label class="f">Crush %${num('s-crush', g.crush_percent, 5, 10, 100)}</label>
+    <label class="f">Default strike<select id="s-strike"><option value="call_above" ${g.strike_rule !== 'nearest_otm' ? 'selected' : ''}>Nearest call at or above price (course trade)</option><option value="nearest_otm" ${g.strike_rule === 'nearest_otm' ? 'selected' : ''}>Nearest strike, OTM side (course spreadsheet)</option></select></label>
     <label class="f">Gap basis<select id="s-basis"><option value="avg" ${g.gap_basis === 'avg' ? 'selected' : ''}>Average of BEs</option><option value="near" ${g.gap_basis === 'near' ? 'selected' : ''}>Nearer BE</option></select></label>
     <label class="f">Past announcements${num('s-lb', g.lookback, 1, 3, 12)}</label>
     <label class="f">Strong ≥ hits${num('s-strong', g.strong_hits, 1, 1)}</label><label class="f">Acceptable ≥ hits${num('s-acc', g.acceptable_hits, 1, 1)}</label>
@@ -563,6 +585,7 @@ function bind() {
   const P = () => (S.P[sel().symbol] = S.P[sel().symbol] || {});
   M.querySelectorAll('[data-right]').forEach(x => x.onclick = e => {e.preventDefault(); P().right = x.dataset.right; render()});
   const k = M.querySelector('#k-sel'); if (k) k.onchange = () => {P().K = +k.value; render()};
+  M.querySelectorAll('tr[data-strike]').forEach(x => x.onclick = () => {P().K = +x.dataset.strike; P().right = x.dataset.sright; render(); window.scrollTo({top: 0, behavior: 'smooth'})});
   const fs = M.querySelector('#f-sel'); if (fs) fs.onchange = () => {P().front = fs.value; if (P().back && P().back <= fs.value) delete P().back; render()};
   const b = M.querySelector('#b-sel'); if (b) b.onchange = () => {P().back = b.value; render()};
   const keep = (id, fn) => {const el = M.querySelector('#' + id); if (el) el.oninput = () => {fn(el.value); render(); const n = document.getElementById(id); if (n) n.focus()}};
@@ -608,7 +631,7 @@ function bind() {
       watchlist: v('s-watch').split(/[\s,]+/).filter(Boolean)});
     Object.assign(s.strategy, {ba_pass_percent: n('s-bap'), ba_review_percent: n('s-bar'), iv_edge_points: n('s-edge'), skip_back_iv_points: n('s-skip'),
       screen_days_ahead: n('s-ahead'), screen_minutes: n('s-every'), record_forward_test: v('s-fwd') === '1',
-      exit_checks: v('s-checks').split(/[\s,]+/).filter(Boolean).map(x => x.length === 4 ? '0' + x : x), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'),
+      exit_checks: v('s-checks').split(/[\s,]+/).filter(Boolean).map(x => x.length === 4 ? '0' + x : x), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'), strike_rule: v('s-strike'),
       lookback: n('s-lb'), strong_hits: n('s-strong'), acceptable_hits: n('s-acc'), risk_free_rate: n('s-rate') / 100, budget: n('s-budget')});
     post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; S.settingsOk = !r.errors; if (!r.errors) S.settingsDirty = false; document.activeElement.blur(); resetControls(true); if (r.errors) {const m = M.querySelector('#set-msg'); if (m) {m.textContent = S.settingsErr; m.className = 'err'}} else render()})};
 }

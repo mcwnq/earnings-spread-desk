@@ -76,7 +76,7 @@ def test_forward_test_end_to_end(tmp_path):
             ids = {r["id"] for r in app.journal.records}
             assert ids == {"2018-03-26|RHT", "2018-03-26|PAYX"}     # only today's entries
             rht = app.journal.get("2018-03-26|RHT")
-            assert set(rht["sides"]) == {"C", "P"} and rht["default_right"] == "P"
+            assert set(rht["sides"]) == {"C", "P"} and rht["default_right"] == "C"
             clock.t = datetime(2018, 3, 27, 9, 50, tzinfo=ET)        # next session, after the 09:45 check
             await app.journal_pass()
             await app.journal_pass()
@@ -92,7 +92,7 @@ def test_forward_test_end_to_end(tmp_path):
                              " AND side='P'").fetchone()[0]
             assert pnl == rht["exits"]["09:45"]["sides"]["P"]["pnl"]
             assert {r["symbol"] for r in app.store.screens()} >= {"RHT", "PAYX"}
-            assert app.store.screens("RHT")[0]["side"] == "P"
+            assert app.store.screens("RHT")[0]["side"] == "C"
         finally:
             await app.shutdown()
     asyncio.run(run())

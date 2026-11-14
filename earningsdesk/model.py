@@ -106,11 +106,26 @@ def quote(chain: dict, expiry: str, right: str, K: float) -> dict | None:
     return ((chain.get(expiry) or {}).get(right) or {}).get(float(K))
 
 
+STRIKE_RULES = ("call_above", "nearest_otm")
+
+
+def default_strike(strikes: list[float], S: float, rule: str = "call_above") -> float:
+    """call_above: the nearest strike at or above the price, traded as a call (the course's RHT 155C at 153.09).
+    nearest_otm: the nearest strike, on its out-of-the-money side (the course spreadsheet: MROUND(price, strike gap),
+    call when the strike is at or above the price, else put; RHT -> 152.5P)."""
+    if rule == "call_above":
+        above = [k for k in strikes if k >= S - 1e-9]
+        if above:
+            return min(above)
+    return min(strikes, key=lambda k: abs(k - S))
+
+
 def pick_back(chain: dict, exps: list[str], K: float, right: str, skip_iv_points: float = 8.0,
               pass_pct: float = 110.0, review_pct: float = 120.0) -> tuple[str | None, str]:
     """The long leg (slide 11): the next expiry after the short one, but skip an expiry whose IV is still well above
     the one after it, and if its market fails the bid-ask screen try the later ones (up to the 3 after it).
-    Takes the first that passes, else the first at "review", else the next expiry. Returns (expiry, why)."""
+    Takes the first that passes or is at "review" (the course traded RHT's Apr 06 leg at 112%), else the next
+    expiry. Returns (expiry, why)."""
     later = exps[1:]
     if not later:
         return None, ""
@@ -125,11 +140,10 @@ def pick_back(chain: dict, exps: list[str], K: float, right: str, skip_iv_points
         b, a = q.get("bid"), q.get("ask")
         st = ba_status(a / b, pass_pct, review_pct) if (b and a and b > 0 and a > 0) else "fail"
         ok.append((e, st))
-        if st == "pass":
+        if st != "fail":
             break
-        notes.append(f"{label}: market {'wide (review)' if st == 'review' else 'too wide' if b and a else 'has no quote'}")
-    pick = next((e for e, st in ok if st == "pass"), None) or next((e for e, st in ok if st == "review"), None) \
-        or (ok[0][0] if ok else later[0])
+        notes.append(f"{label}: market {'too wide' if b and a else 'has no quote'}")
+    pick = next((e for e, st in ok if st != "fail"), None) or (ok[0][0] if ok else later[0])
     if pick == later[0]:
         return pick, ""
     skipped = [n for n in notes if not n.startswith(f"{_d(pick):%b %d}")]
