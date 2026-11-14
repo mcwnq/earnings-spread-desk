@@ -20,7 +20,7 @@ const rp = (x, d = 0) => x == null ? '—' : (x * 100).toFixed(d) + '%';   // as
 const cap = x => x == null ? '' : x >= 1e9 ? '$' + (x / 1e9).toFixed(1) + 'B' : '$' + (x / 1e6).toFixed(0) + 'M';
 
 /* ---------- state ---------- */
-let ST = {cands: [], messages: [], trades: [], connection: {}, settings: null, earnings: {}};
+let ST = {cands: [], messages: [], trades: [], journal: [], connection: {}, settings: null, earnings: {}};
 const S = {sel: null, crush: null, crushMode: null, backChg: null, basis: null, P: {}, budget: null, exp: 'new',
            exitMode: 'active', target: 50, timeStop: '13:30', checks: {}, week: null, ladder: null, exitSel: null,
            exitQuotes: {}, settingsErr: '', ovMsg: ''};
@@ -83,7 +83,7 @@ const VIEWS = [
   ['grp', 'Setup steps'], ['calendar', '1', 'Earnings calendar'], ['screener', '2–3', 'Bid-ask & Yes/No'],
   ['analyze', '4', 'Is / Was analysis'], ['risk', '5', 'Risk checklist'], ['entry', '6', 'Entry ticket'],
   ['exit', '7', 'Exit next day'],
-  ['grp', 'More'], ['playbooks', '+', 'Straddle · other plays'], ['settings', '⚙', 'Settings']];
+  ['grp', 'More'], ['playbooks', '+', 'Straddle · other plays'], ['results', '≡', 'Forward test'], ['settings', '⚙', 'Settings']];
 function cur() {const h = location.hash.slice(1); return VIEWS.some(v => v[0] === h) ? h : 'overview'}
 function nav() {
   document.getElementById('nav').innerHTML = VIEWS.map(v => v[0] === 'grp' ? `<div class="grp">${v[1]}</div>` :
@@ -461,6 +461,41 @@ function vPlaybooks() {
   </div>`;
 }
 
+function vResults() {
+  const checks = [...(strat().exit_checks || [])].sort();
+  const chk = checks.includes(S.resCheck) ? S.resCheck : checks[checks.length - 1];
+  const other = S.resSide === 'other';
+  const recs = [...(ST.journal || [])].sort((x, y) => y.entry_date.localeCompare(x.entry_date) || x.symbol.localeCompare(y.symbol));
+  const sideOf = r => {const d = r.default_right; const k = other ? Object.keys(r.sides).find(x => x !== d) : d; return k ? {k, s: r.sides[k]} : null};
+  const group = (r, sd) => {
+    if (!other) return r.stage_k === 'ok' ? sd.s.verdict : r.stage_k === 'iw' ? 'Weak' : 'Did not pass screens';
+    if (sd.s.baOverall === 'fail') return 'Fails bid-ask';
+    return sd.s.verdict && sd.s.verdict !== 'n/a' ? sd.s.verdict : 'No Is / Was';
+  };
+  const order = ['Strong', 'Acceptable', 'Weak', 'Did not pass screens', 'Fails bid-ask', 'No Is / Was'];
+  const G = {};
+  recs.forEach(r => {const sd = sideOf(r); if (!sd) return; const q = (((r.exits || {})[chk] || {}).sides || {})[sd.k];
+    const g = G[group(r, sd)] = G[group(r, sd)] || {n: 0, done: 0, wins: 0, sum: 0};
+    g.n++; if (q && q.pnl != null) {g.done++; g.sum += q.pnl; if (q.pnl > 0) g.wins++}});
+  const money = x => `<span style="color:var(${x >= 0 ? '--good' : '--bad'})">${x >= 0 ? '+' : ''}${usd0(x)}</span>`;
+  return `${banner()}<div class="head"><div><h1>Forward test</h1><p>Every candidate's last-hour screen on its entry day is saved, passed or not, with both the call and the put calendar. The next session the same spreads are quoted at ${checks.join(', ')} ET and priced to sell at the spread bid + 25% of the width. P&L is per spread against the 25-20 entry price. Nothing is traded.</p></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="seg">${checks.map(c => `<button data-rcheck="${c}" class="${c === chk ? 'on' : ''}">${c}</button>`).join('')}</span>
+  <span class="seg"><button data-rside="default" class="${other ? '' : 'on'}">Default side</button><button data-rside="other" class="${other ? 'on' : ''}">Other side</button></span>
+  <a class="btn" href="/api/journal.csv">Download CSV</a></div></div>
+  ${recs.length ? `<div class="panel"><div class="ph"><h2>By verdict at ${chk} ET</h2><span class="muted" style="font-size:12px">${other ? 'the other side of each strike' : 'the side the screens chose'}</span></div><div class="tbl-wrap"><table><thead><tr><th>Group</th><th class="r">Candidates</th><th class="r">Priced at ${chk}</th><th class="r">Winners</th><th class="r">Win rate</th><th class="r">Avg P&L / spread</th><th class="r">Total</th></tr></thead><tbody>
+   ${order.filter(k => G[k]).map(k => {const g = G[k]; return `<tr><td>${k}</td><td class="r num">${g.n}</td><td class="r num">${g.done}</td><td class="r num">${g.wins}</td><td class="r num">${g.done ? pct(g.wins / g.done * 100, 0) : '—'}</td><td class="r num">${g.done ? money(g.sum / g.done) : '—'}</td><td class="r num">${g.done ? money(g.sum) : '—'}</td></tr>`}).join('')}
+   </tbody></table></div></div>
+  <div class="panel" style="margin-top:14px"><h2 style="margin-bottom:8px">Candidates</h2><div class="tbl-wrap"><table><thead><tr><th>Entered</th><th>Ticker</th><th>Report</th><th>Screens</th><th>Calendar</th><th class="r">Entry</th>${checks.map(c => `<th class="r">${c}</th>`).join('')}<th class="r">Stock move</th></tr></thead><tbody>
+   ${recs.map(r => {const sd = sideOf(r); if (!sd) return ''; const s = sd.s; const last = checks.map(c => r.exits[c]).filter(Boolean).pop();
+     return `<tr><td>${fmtD(r.entry_date)}</td><td class="tk">${r.symbol}</td><td>${fmtE(r.report)} ${pill(r.timing, 'p-neutral')}</td><td>${other ? pill(group(r, sd), 'p-neutral') : pill(r.stage || '—', r.stage_k === 'ok' ? 'p-good' : r.stage_k === 'iw' ? 'p-warn' : 'p-neutral')}</td>
+     <td class="mono">${s.K}${s.right} ${fmtE(s.front)}/${fmtE(s.back)}</td><td class="r num">${f2(s.entry)}</td>
+     ${checks.map(c => {const q = ((r.exits[c] || {}).sides || {})[sd.k]; return `<td class="r num">${q && q.pnl != null ? money(q.pnl) + `<div class="muted" style="font-size:11px">@ ${f2(q.offer)}</div>` : q && q.error ? '<span class="muted">no market</span>' : r.exit_date > today() || (r.exit_date === today() && !r.exits[c]) ? '<span class="muted">' + fmtE(r.exit_date) + '</span>' : '<span class="muted">missed</span>'}</td>`}).join('')}
+     <td class="r num">${last && last.move != null ? (last.move >= 0 ? '+' : '') + last.move.toFixed(2) + '%' : '—'}</td></tr>`}).join('')}
+   </tbody></table></div>
+   <p class="muted" style="font-size:12px;margin:8px 0 0">"missed" means the app wasn't running (or TWS wasn't connected) within an hour of that check. Entries record only while the app runs in the last hour on the entry day.</p></div>` :
+  `<div class="panel empty">No records yet. They start with the next last-hour screen (15:00–16:00 ET on an entry day, with TWS connected and Live or Frozen data), and the next session's checks fill in on their own while the app runs.</div>`}`;
+}
+
 function vSettings() {
   const s = ST.settings; if (!s) return '<div class="empty">Loading…</div>';
   const c = s.connection, e = s.earnings, g = s.strategy, l = s.load;
@@ -484,7 +519,9 @@ function vSettings() {
     <label class="f">Yes/No edge (IV pts)${num('s-edge', g.iv_edge_points, 0.5, 0)}</label>
     <label class="f">Skip long expiry if IV ≥ pts above next${num('s-skip', g.skip_back_iv_points, 0.5, 0)}</label>
     <label class="f">Screen entries for the next N sessions${num('s-ahead', g.screen_days_ahead, 1, 0, 5)}</label>
-    <label class="f">Re-screen every (min, last hour)${num('s-every', g.screen_minutes, 1, 1)}</label></div></div>
+    <label class="f">Re-screen every (min, last hour)${num('s-every', g.screen_minutes, 1, 1)}</label>
+    <label class="f">Forward test<select id="s-fwd"><option value="1" ${g.record_forward_test ? 'selected' : ''}>Record</option><option value="0" ${g.record_forward_test ? '' : 'selected'}>Off</option></select></label>
+    <label class="f">Next-day checks (ET, comma separated)<input type="text" id="s-checks" value="${esc((g.exit_checks || []).join(', '))}"></label></div></div>
    <div class="panel"><h2>Is / Was</h2><div class="ctrls" style="margin-top:10px">
     <label class="f">Crush<select id="s-cm"><option value="mult" ${g.crush_mode === 'mult' ? 'selected' : ''}>Front IV × %</option><option value="retrace" ${g.crush_mode === 'retrace' ? 'selected' : ''}>Retrace premium</option></select></label>
     <label class="f">Crush %${num('s-crush', g.crush_percent, 5, 10, 100)}</label>
@@ -508,7 +545,7 @@ function render() {
   const active = document.activeElement && M.contains(document.activeElement) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) ? document.activeElement.id : null;
   if (active && ['setf', 'ovf', 'fillf', 'closef', 'past-rows'].some(f => document.activeElement.closest('#' + f) || active === f)) return;   // don't wipe a form being typed in
   M.innerHTML = ({overview: vOverview, calendar: vCalendar, screener: vScreener, analyze: vAnalyze, risk: vRisk, entry: vEntry,
-                  exit: vExit, playbooks: vPlaybooks, settings: vSettings}[cur()])();
+                  exit: vExit, playbooks: vPlaybooks, results: vResults, settings: vSettings}[cur()])();
   bind();
   if (active) {const n = document.getElementById(active); if (n) n.focus()}
 }
@@ -539,6 +576,8 @@ function bind() {
   M.querySelectorAll('[data-exp]').forEach(x => x.onclick = () => {S.exp = x.dataset.exp; save(); render()});
   M.querySelectorAll('[data-ck]').forEach(x => x.onchange = () => {S.checks[x.dataset.ck] = x.checked; render()});
   M.querySelectorAll('[data-trade]').forEach(x => {const f = () => {S.exitSel = x.dataset.trade; render()}; x.onclick = f; x.onkeydown = e => {if (e.key === 'Enter' || e.key === ' ') {e.preventDefault(); f()}}});
+  M.querySelectorAll('[data-rcheck]').forEach(x => x.onclick = () => {S.resCheck = x.dataset.rcheck; render()});
+  M.querySelectorAll('[data-rside]').forEach(x => x.onclick = () => {S.resSide = x.dataset.rside; render()});
   const sim = M.querySelector('#simulate'); if (sim) sim.onclick = () => {
     S.ladder = {tk: sel().symbol, step: 0}; render(); let i = 0;
     const iv = setInterval(() => {i++; if (!S.ladder || i > 6) {clearInterval(iv); return} S.ladder.step = i; render()}, 600)};
@@ -568,7 +607,8 @@ function bind() {
     Object.assign(s.earnings, {finnhub_api_key: v('s-fh'), days_ahead: n('s-days'), min_market_cap_billions: n('s-cap'), max_symbols_per_day: n('s-maxd'),
       watchlist: v('s-watch').split(/[\s,]+/).filter(Boolean)});
     Object.assign(s.strategy, {ba_pass_percent: n('s-bap'), ba_review_percent: n('s-bar'), iv_edge_points: n('s-edge'), skip_back_iv_points: n('s-skip'),
-      screen_days_ahead: n('s-ahead'), screen_minutes: n('s-every'), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'),
+      screen_days_ahead: n('s-ahead'), screen_minutes: n('s-every'), record_forward_test: v('s-fwd') === '1',
+      exit_checks: v('s-checks').split(/[\s,]+/).filter(Boolean).map(x => x.length === 4 ? '0' + x : x), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'),
       lookback: n('s-lb'), strong_hits: n('s-strong'), acceptable_hits: n('s-acc'), risk_free_rate: n('s-rate') / 100, budget: n('s-budget')});
     post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; S.settingsOk = !r.errors; if (!r.errors) S.settingsDirty = false; document.activeElement.blur(); resetControls(true); if (r.errors) {const m = M.querySelector('#set-msg'); if (m) {m.textContent = S.settingsErr; m.className = 'err'}} else render()})};
 }
@@ -588,6 +628,7 @@ function connect() {
     else if (m.type === 'cand') {const i = ST.cands.findIndex(c => c.symbol === m.cand.symbol); if (i >= 0) ST.cands[i] = m.cand; else ST.cands.push(m.cand)}
     else if (m.type === 'message') {if (m.update) {const i = ST.messages.findIndex(x => x.id === m.message.id); if (i >= 0) ST.messages[i] = m.message} else ST.messages.push(m.message)}
     else if (m.type === 'trades') ST.trades = m.trades;
+    else if (m.type === 'journal') ST.journal = m.journal;
     if (m.type === 'connection' && cur() !== 'overview') {
       const c = ST.connection; document.getElementById('clock').innerHTML = `${c.demo ? 'Replay clock' : 'Market clock'}<br><b>${esc(c.clock || '—')}</b><br><span class="conn"><span class="dot ${c.state === 'Connected' ? 'on' : c.state === 'Connecting' ? 'mid' : ''}"></span>TWS ${esc(c.state || '—')}</span>`;
       return;

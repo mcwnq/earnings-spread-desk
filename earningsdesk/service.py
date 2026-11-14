@@ -20,6 +20,7 @@ from . import model as M
 from .config import MARKET_DATA_TYPES, AppConfig
 from .earnings import EarningsBook
 from .history import past_gaps
+from .journal import Journal
 from .timeutil import (add_trading_days, in_entry_window, is_rth, now_et, on_or_after, parse_expiry, sessions,
                        trade_date_for)
 
@@ -128,6 +129,7 @@ class App:
         self._screening: set[str] = set()
         self._stock_ids: dict[str, Contract] = {}
         self.trades_path = cfg.data_path() / "trades.json"
+        self.journal = Journal(cfg.data_path() / "journal.json")
 
     # ------------------------------------------------------------------ messages and broadcast
     def note_requests(self, n: int = 1):
@@ -165,7 +167,8 @@ class App:
     async def start(self):
         self._tasks = [asyncio.create_task(self._connection_loop(), name="connection"),
                        asyncio.create_task(self._earnings_loop(), name="earnings"),
-                       asyncio.create_task(self._screen_loop(), name="screens")]
+                       asyncio.create_task(self._screen_loop(), name="screens"),
+                       asyncio.create_task(self._journal_loop(), name="forward test")]
 
     async def shutdown(self):
         for t in self._tasks:
@@ -452,6 +455,53 @@ class App:
             self._screening.discard(symbol)
         self.analyze_default(c)
         self.broadcast({"type": "cand", "cand": self.public_cand(c)})
+        self.maybe_record_entry(c)
+
+    def maybe_record_entry(self, c: dict):
+        """Forward test: keep the latest last-hour screen of today's entries (see journal.py)."""
+        now = self.clock()
+        if not (self.cfg.strategy.record_forward_test and c.get("state") == "ready" and c.get("quotes_live")
+                and in_entry_window(now) and c["entry"] == now.date().isoformat()):
+            return
+        if self.journal.record_entry(c, now) is not None:
+            self.broadcast({"type": "journal", "journal": self.journal.records[-300:]})
+
+    async def _journal_loop(self):
+        while True:
+            await asyncio.sleep(20)
+            if not self.cfg.strategy.record_forward_test or not self.connected():
+                continue
+            try:
+                await self.journal_pass()
+            except Exception as e:  # noqa: BLE001
+                log.exception("forward test pass")
+                self.add_message("warning", f"Forward test: could not quote next-day spreads ({e}).")
+
+    async def journal_pass(self):
+        now = self.clock()
+        due = self.journal.due(now.date().isoformat(), now.strftime("%H:%M"), sorted(self.cfg.strategy.exit_checks))
+        for rec, check in due:
+            legs = []
+            for right, sd in rec["sides"].items():
+                legs += [(right, "f", sd["front"], sd["K"]), (right, "b", sd["back"], sd["K"])]
+            got = await asyncio.gather(*[self.quote_option(rec["symbol"], e, k, r) for r, _, e, k in legs],
+                                       return_exceptions=True)
+            q = {}
+            for (r, which, _, _), g in zip(legs, got):
+                q.setdefault(r, {})[which] = g if isinstance(g, dict) else {}
+            stock = await self._stock(rec["symbol"])
+            S = (await self.snapshot(stock, need_iv=False, timeout=4))["price"]
+            self.journal.record_exit(rec["id"], check, S, {r: (v.get("f", {}), v.get("b", {})) for r, v in q.items()}, now)
+            self.add_message("info", f"Forward test: {rec['symbol']} spreads quoted at the {check} check.")
+        if due:
+            self.broadcast({"type": "journal", "journal": self.journal.records[-300:]})
+
+    async def quote_option(self, symbol: str, expiry: str, strike: float, right: str) -> dict:
+        o = await self._details(Option(symbol, expiry, float(strike), right, "SMART", currency="USD"),
+                                f"{symbol} {expiry} {strike}{right}")
+        if o is None:
+            return {}
+        return await self.snapshot(o, need_iv=True)
 
     async def _screen(self, c: dict):
         sym = c["symbol"]
@@ -617,4 +667,5 @@ class App:
                 "cands": [self.public_cand(c) for c in sorted(self.cands.values(),
                                                               key=lambda c: (c["date"], c["timing"] != "BMO", c["symbol"]))],
                 "trades": self.trades(),
+                "journal": self.journal.records[-300:],
                 "messages": list(self.messages)}

@@ -148,6 +148,11 @@ def make_app(app) -> web.Application:
         app.broadcast({"type": "trades", "trades": rows})
         return json_response({"ok": True})
 
+    @routes.get("/api/journal.csv")
+    async def journal_csv(_):
+        return web.Response(text=app.journal.csv(sorted(app.cfg.strategy.exit_checks)), content_type="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="forward_test.csv"'})
+
     @routes.get("/ws")
     async def ws_handler(request):
         ws = web.WebSocketResponse(heartbeat=20)

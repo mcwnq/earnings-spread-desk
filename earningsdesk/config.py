@@ -57,6 +57,8 @@ class StrategyConfig:
     budget: float = 500.0             # max loss budget per trade, for sizing
     screen_days_ahead: int = 1        # option screens for entries today and the next N sessions
     screen_minutes: float = 15.0      # re-screen today's entries this often during the last 90 minutes
+    record_forward_test: bool = True  # save entry snapshots and quote the same spreads the next session
+    exit_checks: list[str] = field(default_factory=lambda: ["09:45", "11:00", "13:30", "15:45"])   # ET
 
 
 @dataclass
@@ -164,6 +166,9 @@ def validate(cfg: AppConfig) -> list[str]:
         e.append("Past announcements compared must be between 3 and 12.")
     if not (1 <= s.trades_per_day <= 10):
         e.append("Trades per day must be between 1 and 10.")
+    import re as _re
+    if not all(isinstance(t, str) and _re.match(r"^(09:(3[1-9]|[45]\d)|1[0-5]:[0-5]\d)$", t) for t in s.exit_checks):
+        e.append("Exit check times must be HH:MM between 09:31 and 15:59 ET.")
     if not (1 <= cfg.earnings.days_ahead <= 21):
         e.append("Days of announcements to load must be between 1 and 21.")
     return e
