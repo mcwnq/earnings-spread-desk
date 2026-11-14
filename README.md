@@ -70,6 +70,20 @@ Without a Finnhub key every date is "1 source". It still works, but check those 
 Screens run on start-up, then every 15 minutes during the last hour for today's entries and hourly otherwise. They
 cover entries today and the next session (Settings), and you can also run them from any page.
 
+## Forward test
+
+IBKR has no data for expired options, so past calendars can't be rebuilt from it. Instead, the app records its own:
+
+* **Entry:** on each entry day, the last-hour screen of every candidate is saved, whether it passed or not. Both the
+  call and the put calendar are kept, with the 25-20 entry price.
+* **Exit:** the next session, the same legs are quoted at 09:45, 11:00, 13:30 and 15:45 ET (Settings). Each is
+  priced to sell at the spread bid + 25% of the width.
+* **Results page:** shows P&L per spread for every candidate, grouped by verdict. This tells you whether Strong
+  really beats Weak. `forward_test.csv` exports everything for a spreadsheet.
+
+The app has to be running during the last hour on the entry day and at the check times. A check missed by more than
+an hour is skipped rather than taken late.
+
 ## Files
 
 Data folder `~/EarningsDesk` (demo: `~/EarningsDesk-demo`):
@@ -77,6 +91,7 @@ Data folder `~/EarningsDesk` (demo: `~/EarningsDesk-demo`):
 * `settings.json`
 * `overrides.json`: dates you confirmed
 * `trades.json`: fills you recorded
+* `journal.json`: the forward test
 * `cache/`: calendar answers and daily bars
 
 ## Tests

@@ -159,3 +159,4 @@ textarea{font:inherit;font-family:var(--f-mono);font-size:12px;width:100%;min-he
 .settings h3{margin:16px 0 6px}
 .err{color:var(--bad);font-size:12.5px}
 .empty{padding:18px;text-align:center;color:var(--muted)}
+a.btn{text-decoration:none;display:inline-block}
