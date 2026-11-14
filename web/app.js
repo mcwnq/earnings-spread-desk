@@ -42,12 +42,13 @@ function mainRight(t) {
 function params(t, right) {
   const p = S.P[t.symbol] || {};
   return {symbol: t.symbol, K: p.K ?? null, right, front: p.front ?? null, back: p.back ?? null, crush_mode: S.crushMode,
-          crush_percent: S.crush, back_iv_change_percent: S.backChg, gap_basis: S.basis};
+          crush_percent: S.crush, back_iv_change_percent: S.backChg, gap_basis: S.basis, haircut_percent: S.haircut,
+          hv: p.hv ?? null, iv_low: p.iv_low ?? null};
 }
 function isDefault(t) {
   const p = S.P[t.symbol] || {}, s = strat();
   return p.K == null && p.front == null && p.back == null && (p.right == null || p.right === (t.a || {}).right) &&
-         S.crushMode === s.crush_mode && S.crush === s.crush_percent && S.backChg === s.back_iv_change_percent && S.basis === s.gap_basis;
+         p.hv == null && p.iv_low == null && S.haircut === s.haircut_percent && S.crushMode === s.crush_mode && S.crush === s.crush_percent && S.backChg === s.back_iv_change_percent && S.basis === s.gap_basis;
 }
 /* the analysis for the page's controls: the server's default one, or one asked for with these controls.
    side 'alt' is the same strike on the other side (put calendar for a call one, and the reverse) */
@@ -315,8 +316,12 @@ function vAnalyze() {
     <label class="f">Calendar<span class="seg"><button data-right="C" class="${a.right === 'C' ? 'on' : ''}">Call</button><button data-right="P" class="${a.right === 'P' ? 'on' : ''}">Put</button></span></label>
     <label class="f" for="f-sel">Short expiry<select id="f-sel">${fronts.slice(0, -1).map(f => `<option value="${f}" ${f === a.front ? 'selected' : ''}>${fmtE(f)}${ivAt(f)}${f === t.front ? ' · E' : ''}</option>`).join('')}</select></label>
     <label class="f" for="b-sel">Long expiry<select id="b-sel">${backs.map(b => `<option value="${b}" ${b === a.back ? 'selected' : ''}>${fmtE(b)}${ivAt(b)}</option>`).join('')}</select></label>
-    <label class="f" for="crush"><span class="seg" style="align-self:flex-start"><button data-cm="mult" class="${S.crushMode === 'mult' ? 'on' : ''}">Front IV × %</button><button data-cm="retrace" class="${S.crushMode === 'retrace' ? 'on' : ''}">Retrace premium</button></span><span class="v">${a.fIV ? (S.crushMode === 'retrace' ? `${ivp(a.fIV)} − ${S.crush}% × (${ivp(a.fIV)} − ${ivp(a.bIV)})` : `${ivp(a.fIV)} × ${S.crush}%`) + ` = <b>${ivp(a.fIV1)} IV</b>` : ''}</span><input id="crush" type="range" min="${S.crushMode === 'mult' ? 30 : 50}" max="100" step="5" value="${S.crush}"></label>
-    <label class="f" for="bchg">Back IV change <span class="v">${S.backChg > 0 ? '+' : ''}${S.backChg}% → ${ivp(a.bIV1)} IV</span><input id="bchg" type="range" min="-30" max="10" step="5" value="${S.backChg}"></label>
+    <label class="f" for="crush"><span class="seg" style="align-self:flex-start"><button data-cm="mult" class="${S.crushMode === 'mult' ? 'on' : ''}">Front IV × %</button><button data-cm="retrace" class="${S.crushMode === 'retrace' ? 'on' : ''}">Retrace premium</button><button data-cm="target" class="${S.crushMode === 'target' ? 'on' : ''}">Target vol</button></span>${S.crushMode === 'target'
+      ? `<span class="v">${a.target ? `target ${ivp(a.target)} · haircut ${S.haircut}% → front <b>${ivp(a.fIV1)}</b>, back <b>${ivp(a.bIV1)}</b> IV` : ''}</span><input id="hcut" type="range" min="50" max="100" step="5" value="${S.haircut}">`
+      : `<span class="v">${a.fIV ? (S.crushMode === 'retrace' ? `${ivp(a.fIV)} − ${S.crush}% × (${ivp(a.fIV)} − ${ivp(a.bIV)})` : `${ivp(a.fIV)} × ${S.crush}%`) + ` = <b>${ivp(a.fIV1)} IV</b>` : ''}</span><input id="crush" type="range" min="${S.crushMode === 'mult' ? 30 : 50}" max="100" step="5" value="${S.crush}">`}</label>
+    ${S.crushMode === 'target'
+      ? `<label class="f" for="ivl-in">Target vol = min of<span class="v" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">IV low <input id="ivl-in" type="number" step="0.5" style="width:64px" value="${a.iv_low != null ? (a.iv_low * 100).toFixed(1) : ''}" placeholder="—"> HV <input id="hv-in" type="number" step="0.5" style="width:64px" value="${a.hv != null ? (a.hv * 100).toFixed(1) : ''}" placeholder="—"> back − 1 = ${a.bIV ? ivp(a.bIV - .01) : '—'}</span></label>`
+      : `<label class="f" for="bchg">Back IV change <span class="v">${S.backChg > 0 ? '+' : ''}${S.backChg}% → ${ivp(a.bIV1)} IV</span><input id="bchg" type="range" min="-30" max="10" step="5" value="${S.backChg}"></label>`}
     <label class="f">Endurable gap basis<span class="seg"><button data-basis="avg" class="${S.basis === 'avg' ? 'on' : ''}">Average of BEs</button><button data-basis="near" class="${S.basis === 'near' ? 'on' : ''}">Nearer BE</button></span></label>
     <label class="f">&nbsp;<button class="sm" id="reset-an">Reset to settings</button></label>
   </div></div>`;
@@ -331,7 +336,7 @@ function vAnalyze() {
      ${feed(`Black-Scholes, r=${(strat().risk_free_rate * 100).toFixed(1)}% · front ${ivp(a.fIV)}→${ivp(a.fIV1)} IV, ${a.daysFront}d left · back ${ivp(a.bIV)}→${ivp(a.bIV1)} IV, ${a.daysBack}d left · per spread ×100 · IV = IBKR model IV per leg`)}
      <div style="margin-top:14px">${ivByStrike(t, a)}</div></div>
    <div class="grid" style="align-content:start">
-    <div class="verdict ${vb}"><div><div class="big">${a.verdict}</div><div style="font-size:12.5px">${a.hits} of ${a.n} past gaps were smaller than ${pct(a.meg)}.${a.straddle ? ' The endurable gap is below the median gap, so check the straddle playbook.' : ''}</div></div></div>
+    <div class="verdict ${vb}"><div><div class="big">${a.verdict}</div><div style="font-size:12.5px">${a.noProfit ? 'The modeled spread loses money the day after even if the stock doesn't move, so it endures no gap.' : `${a.hits} of ${a.n} past gaps were smaller than ${pct(a.meg)}.`}${a.straddle ? ' The endurable gap is below the median gap, so check the straddle playbook.' : ''}</div></div></div>
     ${a.front !== t.front ? `<div class="note"><b>Short leg is not the earnings expiry.</b> The course shorts the first expiry after earnings (${fmtE(t.front)}), so the short option carries the IV that gets crushed.</div>` : ''}
     ${t.gap_note ? `<div class="note">${esc(t.gap_note)} They are marked * and drawn lighter.</div>` : ''}
     <div class="panel"><div class="grid g2">
@@ -544,8 +549,9 @@ function vSettings() {
     <label class="f">Forward test<select id="s-fwd"><option value="1" ${g.record_forward_test ? 'selected' : ''}>Record</option><option value="0" ${g.record_forward_test ? '' : 'selected'}>Off</option></select></label>
     <label class="f">Next-day checks (ET, comma separated)<input type="text" id="s-checks" value="${esc((g.exit_checks || []).join(', '))}"></label></div></div>
    <div class="panel"><h2>Is / Was</h2><div class="ctrls" style="margin-top:10px">
-    <label class="f">Crush<select id="s-cm"><option value="mult" ${g.crush_mode === 'mult' ? 'selected' : ''}>Front IV × %</option><option value="retrace" ${g.crush_mode === 'retrace' ? 'selected' : ''}>Retrace premium</option></select></label>
+    <label class="f">Crush<select id="s-cm"><option value="mult" ${g.crush_mode === 'mult' ? 'selected' : ''}>Front IV × %</option><option value="retrace" ${g.crush_mode === 'retrace' ? 'selected' : ''}>Retrace premium</option><option value="target" ${g.crush_mode === 'target' ? 'selected' : ''}>Target vol, both legs (course spreadsheet)</option></select></label>
     <label class="f">Crush %${num('s-crush', g.crush_percent, 5, 10, 100)}</label>
+    <label class="f">Target-vol haircut %${num('s-hcut', g.haircut_percent, 5, 10, 100)}</label>
     <label class="f">Default strike<select id="s-strike"><option value="call_above" ${g.strike_rule !== 'nearest_otm' ? 'selected' : ''}>Nearest call at or above price (course trade)</option><option value="nearest_otm" ${g.strike_rule === 'nearest_otm' ? 'selected' : ''}>Nearest strike, OTM side (course spreadsheet)</option></select></label>
     <label class="f">Gap basis<select id="s-basis"><option value="avg" ${g.gap_basis === 'avg' ? 'selected' : ''}>Average of BEs</option><option value="near" ${g.gap_basis === 'near' ? 'selected' : ''}>Nearer BE</option></select></label>
     <label class="f">Past announcements${num('s-lb', g.lookback, 1, 3, 12)}</label>
@@ -589,7 +595,8 @@ function bind() {
   const fs = M.querySelector('#f-sel'); if (fs) fs.onchange = () => {P().front = fs.value; if (P().back && P().back <= fs.value) delete P().back; render()};
   const b = M.querySelector('#b-sel'); if (b) b.onchange = () => {P().back = b.value; render()};
   const keep = (id, fn) => {const el = M.querySelector('#' + id); if (el) el.oninput = () => {fn(el.value); render(); const n = document.getElementById(id); if (n) n.focus()}};
-  keep('crush', v => S.crush = +v); keep('bchg', v => S.backChg = +v); keep('tgt', v => S.target = +v);
+  keep('crush', v => S.crush = +v); keep('bchg', v => S.backChg = +v); keep('hcut', v => S.haircut = +v);
+  [['ivl-in', 'iv_low'], ['hv-in', 'hv']].forEach(([id, f]) => {const el = M.querySelector('#' + id); if (el) el.onchange = () => {if (el.value === '') delete P()[f]; else P()[f] = +el.value / 100; render()}}); keep('tgt', v => S.target = +v);
   const ra = M.querySelector('#reset-an'); if (ra) ra.onclick = () => {resetControls(); delete S.P[sel().symbol]; render()};
   const bu = M.querySelector('#budget'); if (bu) bu.onchange = () => {S.budget = Math.max(50, +bu.value || 500); render()};
   const tsop = M.querySelector('#tstop'); if (tsop) tsop.onchange = () => {S.timeStop = tsop.value; render()};
@@ -631,14 +638,14 @@ function bind() {
       watchlist: v('s-watch').split(/[\s,]+/).filter(Boolean)});
     Object.assign(s.strategy, {ba_pass_percent: n('s-bap'), ba_review_percent: n('s-bar'), iv_edge_points: n('s-edge'), skip_back_iv_points: n('s-skip'),
       screen_days_ahead: n('s-ahead'), screen_minutes: n('s-every'), record_forward_test: v('s-fwd') === '1',
-      exit_checks: v('s-checks').split(/[\s,]+/).filter(Boolean).map(x => x.length === 4 ? '0' + x : x), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'), strike_rule: v('s-strike'),
+      exit_checks: v('s-checks').split(/[\s,]+/).filter(Boolean).map(x => x.length === 4 ? '0' + x : x), crush_mode: v('s-cm'), crush_percent: n('s-crush'), haircut_percent: n('s-hcut'), gap_basis: v('s-basis'), strike_rule: v('s-strike'),
       lookback: n('s-lb'), strong_hits: n('s-strong'), acceptable_hits: n('s-acc'), risk_free_rate: n('s-rate') / 100, budget: n('s-budget')});
     post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; S.settingsOk = !r.errors; if (!r.errors) S.settingsDirty = false; document.activeElement.blur(); resetControls(true); if (r.errors) {const m = M.querySelector('#set-msg'); if (m) {m.textContent = S.settingsErr; m.className = 'err'}} else render()})};
 }
 function alertMsg(t) {ST.messages.push({time: new Date().toLocaleTimeString(), level: 'warning', text: t}); render()}
 function resetControls(force) {
   const s = strat();
-  if (force || S.crush == null) {S.crush = s.crush_percent; S.crushMode = s.crush_mode; S.backChg = s.back_iv_change_percent; S.basis = s.gap_basis; S.budget = s.budget}
+  if (force || S.crush == null) {S.crush = s.crush_percent; S.crushMode = s.crush_mode; S.backChg = s.back_iv_change_percent; S.basis = s.gap_basis; S.budget = s.budget; S.haircut = s.haircut_percent}
 }
 
 /* ---------- live connection ---------- */

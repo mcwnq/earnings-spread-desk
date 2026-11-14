@@ -83,3 +83,17 @@ def past_gaps(bars: list[dict], coming: date, coming_timing: str, known: list[tu
         out.append(g)
         prev = date.fromisoformat(g["date"])
     return out
+
+
+def historical_vol(bars: list[dict], days: int = 30) -> float | None:
+    """Close-to-close historical volatility over the last `days` sessions, annualized (decimal)."""
+    import math
+    closes = [b["close"] for b in bars if b.get("close")][-(days + 1):]
+    if len(closes) < days // 2 + 1:
+        return None
+    rets = [math.log(b / a) for a, b in zip(closes, closes[1:]) if a > 0 and b > 0]
+    if len(rets) < 2:
+        return None
+    m = sum(rets) / len(rets)
+    var = sum((x - m) ** 2 for x in rets) / (len(rets) - 1)
+    return math.sqrt(var) * math.sqrt(252)
