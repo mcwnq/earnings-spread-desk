@@ -20,7 +20,7 @@ from . import model as M
 from .config import MARKET_DATA_TYPES, AppConfig
 from .earnings import EarningsBook
 from .history import past_gaps
-from .timeutil import (add_trading_days, in_entry_window, now_et, on_or_after, parse_expiry, sessions,
+from .timeutil import (add_trading_days, in_entry_window, is_rth, now_et, on_or_after, parse_expiry, sessions,
                        trade_date_for)
 
 log = logging.getLogger("earningsdesk")
@@ -447,6 +447,8 @@ class App:
         finally:
             c["screened_ts"] = time.time()
             c["screened"] = self.clock().strftime("%H:%M ET")
+            # after the close TWS sends no live option quotes (Frozen market data sends the closing ones)
+            c["quotes_live"] = is_rth(self.clock()) or self.cfg.connection.market_data_type != "Live"
             self._screening.discard(symbol)
         self.analyze_default(c)
         self.broadcast({"type": "cand", "cand": self.public_cand(c)})
@@ -552,6 +554,8 @@ class App:
             {"k": "verify", "lbl": "Needs verification", "cls": "p-bad"} if not c["verified"] else
             {"k": "data", "lbl": {"loading": "Loading", "error": "No data"}.get(c.get("state"), "Not screened yet"),
              "cls": "p-neutral"})
+        if c.get("state") == "ready" and c.get("quotes_live") is False and c["stage"]["k"] in ("ba", "data"):
+            c["stage"] = {"k": "closed", "lbl": "Market closed: quotes not live", "cls": "p-neutral"}
 
     def analyze(self, symbol: str, body: dict) -> dict:
         c = self.cands.get(symbol)

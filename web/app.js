@@ -16,6 +16,7 @@ const days = (a, b) => Math.round((D(b) - D(a)) / 864e5);
 const fmtD = s => s ? D(s).toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC'}) : '—';
 const fmtE = s => s ? D(s).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}) : '—';
 const median = a => {const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null};
+const rp = (x, d = 0) => x == null ? '—' : (x * 100).toFixed(d) + '%';   // ask/bid ratio; null when a leg has no quote
 const cap = x => x == null ? '' : x >= 1e9 ? '$' + (x / 1e9).toFixed(1) + 'B' : '$' + (x / 1e6).toFixed(0) + 'M';
 
 /* ---------- state ---------- */
@@ -78,7 +79,7 @@ function nav() {
     `<a href="#${v[0]}" class="${cur() === v[0] ? 'on' : ''}"><span class="n">${v[1]}</span><span>${v[2]}</span></a>`).join('');
 }
 function go(v, tk) {if (tk) {S.sel = tk; save()} if (location.hash === '#' + v) render(); else location.hash = v}
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => {S.settingsErr = ''; S.settingsDirty = false; S.ovMsg = ''; render()});
 
 /* ---------- shared bits ---------- */
 const feed = s => `<div class="feed">${s}</div>`;
@@ -179,8 +180,8 @@ function vScreener() {
   const rows = list.map(t => {const a = t.a || {}, st = stage(t), ok = a.baRatio && a.fq;
     return `<tr class="${t.symbol === (sel() || {}).symbol ? 'sel' : ''}"><td class="tk">${t.symbol}</td><td>${fmtE(t.date)} ${pill(t.timing, 'p-neutral')}</td><td class="r num">${t.S ? t.S.toFixed(2) : '—'}</td><td class="num">${a.K ?? '—'} ${a.right || ''}</td>
     <td>${t.front ? fmtE(t.front) + ' / ' + fmtE(a.back) : '—'}</td>
-    <td class="r num">${ok ? f2(a.fq[0]) + ' / ' + f2(a.fq[1]) : '—'}</td><td>${ok ? pill((a.baRatio[0] * 100).toFixed(0) + '%', baCls(a.baRatio[0])) : ''}</td>
-    <td class="r num">${ok ? f2(a.bq[0]) + ' / ' + f2(a.bq[1]) : '—'}</td><td>${ok ? pill((a.baRatio[1] * 100).toFixed(0) + '%', baCls(a.baRatio[1])) : ''}</td>
+    <td class="r num">${ok ? f2(a.fq[0]) + ' / ' + f2(a.fq[1]) : '—'}</td><td>${ok ? pill(rp(a.baRatio[0], 0), baCls(a.baRatio[0])) : ''}</td>
+    <td class="r num">${ok ? f2(a.bq[0]) + ' / ' + f2(a.bq[1]) : '—'}</td><td>${ok ? pill(rp(a.baRatio[1], 0), baCls(a.baRatio[1])) : ''}</td>
     <td class="r num">${ivp(a.fIV)}</td><td class="r num">${ivp(a.bIV)}</td><td class="r num" style="color:var(${a.yes ? '--good' : '--bad'})">${a.ivDiff == null ? '—' : (a.ivDiff >= 0 ? '+' : '') + a.ivDiff.toFixed(1)}</td>
     <td>${a.ivDiff == null ? '' : a.yes ? pill('YES', 'p-good') : pill('NO', 'p-bad')}</td><td>${pill(st.lbl, st.cls)}</td><td class="mono muted" style="font-size:11px">${esc(t.screened || '')}</td>
     <td>${t.state === 'ready' ? `<button class="sm" data-go="analyze" data-tk="${t.symbol}">Is / Was →</button>` : `<button class="sm" data-screen="${t.symbol}">Screen</button>`}</td></tr>`}).join('');
@@ -189,12 +190,13 @@ function vScreener() {
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${pill('≤' + strat().ba_pass_percent + '% pass', 'p-good')}${pill(strat().ba_pass_percent + '–' + strat().ba_review_percent + '% review', 'p-warn')}${pill('>' + strat().ba_review_percent + '% fail', 'p-bad')}<button class="sm" data-screen="">Screen all now</button></div></div>
   <div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Ticker</th><th>Report</th><th class="r">Last</th><th>Strike</th><th>Expiries</th><th class="r">Front</th><th>Ask/bid</th><th class="r">Back</th><th>Ask/bid</th><th class="r">Front IV</th><th class="r">Back IV</th><th class="r">Δ pts</th><th>Yes/No</th><th>Status</th><th>At</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="16" class="empty">No announcements loaded yet.</td></tr>'}</tbody></table></div>
   ${feed('IBKR snapshots (reqMktData until bid, ask and model IV arrive) · strike = closest to last, call above / put below · long leg = next expiry unless its IV is still high or its market wide')}</div>
+  ${list.some(x => x.quotes_live === false) ? `<div class="note" style="margin-top:14px"><b>Screened after the close.</b> TWS sends no live option bid / ask outside 9:30–16:00 ET, so the bid-ask screen can't be judged. Screen again during the last hour, or set Market data to Frozen in Settings to use the closing quotes.</div>` : ''}
   ${t && t.state === 'ready' && a.fq ? `<div class="grid g2" style="margin-top:14px">
    <div class="panel"><div class="ph"><h2>${t.symbol} chain</h2>${tkSelect()}</div>${chainTable(t, a)}
    <div class="legend" style="margin-top:8px"><span><i style="background:var(--warn)"></i>Legs being screened</span><span>E = earnings inside this expiry</span></div></div>
    <div class="panel"><h2 style="margin-bottom:10px">Why ${t.symbol} ${['ok', 'iw'].includes(stage(t).k) ? 'passes' : 'stops here'}</h2>
-    <div class="rule"><span class="pill ${baCls(a.baRatio[0])}">Front</span><span class="mono">${f2(a.fq[1])} ÷ ${f2(a.fq[0])} = ${(a.baRatio[0] * 100).toFixed(1)}%</span></div>
-    <div class="rule" style="margin-top:6px"><span class="pill ${baCls(a.baRatio[1])}">Back</span><span class="mono">${f2(a.bq[1])} ÷ ${f2(a.bq[0])} = ${(a.baRatio[1] * 100).toFixed(1)}%</span></div>
+    <div class="rule"><span class="pill ${baCls(a.baRatio[0])}">Front</span><span class="mono">${f2(a.fq[1])} ÷ ${f2(a.fq[0])} = ${rp(a.baRatio[0], 1)}</span></div>
+    <div class="rule" style="margin-top:6px"><span class="pill ${baCls(a.baRatio[1])}">Back</span><span class="mono">${f2(a.bq[1])} ÷ ${f2(a.bq[0])} = ${rp(a.baRatio[1], 1)}</span></div>
     ${a.ivDiff != null ? `<div class="rule" style="margin-top:6px">${pill('IV', a.yes ? 'p-good' : 'p-bad')}<span class="mono">${ivp(a.fIV)} − ${ivp(a.bIV)} = ${a.ivDiff.toFixed(1)} pts ${a.yes ? '≥' : '<'} ${strat().iv_edge_points}</span></div>` : ''}
     ${t.back_reason ? `<div class="note" style="margin-top:12px">${esc(t.back_reason)}</div>` : ''}
     ${a.error ? `<div class="note" style="margin-top:12px">${esc(a.error)}</div>` : ''}
@@ -300,7 +302,7 @@ function vRisk() {
   const tradesToday = (ST.trades || []).filter(x => x.entry === t.entry).length, lim = limit();
   const auto = [
     ['date', 'Earnings date and time checked', `${fmtD(t.date)} ${t.timing} · ${t.status === 'verified' ? 'two sources agree' : t.status === 'manual' ? 'confirmed by you' : t.status === 'single' ? 'one source only: check the IR page' : 'sources disagree'}`, t.status !== 'conflict'],
-    ['ba', 'Bid-ask screen passed on both legs', `${(a.baRatio[0] * 100).toFixed(0)}% / ${(a.baRatio[1] * 100).toFixed(0)}%`, a.baOverall !== 'fail'],
+    ['ba', 'Bid-ask screen passed on both legs', `${rp(a.baRatio[0], 0)} / ${rp(a.baRatio[1], 0)}`, a.baOverall !== 'fail'],
     ['yn', 'Yes / No term structure', `${a.ivDiff.toFixed(1)} pts front over back`, a.yes],
     ['iw', 'Is / Was supports the trade', `${a.hits}/${a.n} past gaps inside ${pct(a.meg)}`, a.verdict === 'Strong' || a.verdict === 'Acceptable'],
     ['lim', 'Within daily trade limit', `${tradesToday} of ${lim} recorded for ${fmtD(t.entry)}`, tradesToday < lim]];
@@ -451,13 +453,14 @@ function vSettings() {
     <label class="f">Risk-free rate %${num('s-rate', (g.risk_free_rate * 100).toFixed(2), 0.25, 0)}</label>
     <label class="f">Budget per trade ($)${num('s-budget', g.budget, 50, 50)}</label></div></div>
   </div>
-  <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="pri" type="submit">Save settings</button>${S.settingsErr ? `<span class="err">${esc(S.settingsErr)}</span>` : ''}</div></form>`;
+  <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="pri" type="submit">Save settings</button><span id="set-msg" class="${S.settingsOk ? 'muted' : 'err'}">${esc(S.settingsErr)}</span></div></form>`;
 }
 
 /* ---------- render ---------- */
 let renderQueued = false;
 function render() {
   nav();
+  if (cur() === 'settings' && S.settingsDirty) return;   // live updates must not wipe unsaved edits
   const c = ST.connection;
   document.getElementById('clock').innerHTML = `${c.demo ? 'Replay clock' : 'Market clock'}<br><b>${esc(c.clock || '—')}</b><br><span class="conn"><span class="dot ${c.state === 'Connected' ? 'on' : c.state === 'Connecting' ? 'mid' : ''}"></span>TWS ${esc(c.state || '—')}</span>`;
   const M = document.getElementById('main');
@@ -515,7 +518,9 @@ function bind() {
   const cf = M.querySelector('#closef'); if (cf) cf.onsubmit = e => {e.preventDefault(); const v = +M.querySelector('#close-px').value; if (!(v >= 0) || M.querySelector('#close-px').value === '') return;
     document.activeElement.blur(); saveTrades(ST.trades.map(z => z.id === S.exitSel ? {...z, closed: true, close: v} : z))};
   const dt = M.querySelector('#del-trade'); if (dt) dt.onclick = () => saveTrades(ST.trades.filter(z => z.id !== S.exitSel));
-  const sf = M.querySelector('#setf'); if (sf) sf.onsubmit = e => {e.preventDefault(); const s = JSON.parse(JSON.stringify(ST.settings)); const v = id => M.querySelector('#' + id).value, n = id => +v(id);
+  const sf = M.querySelector('#setf');
+  if (sf) sf.oninput = sf.onchange = () => {const m = M.querySelector('#set-msg'); S.settingsErr = 'Unsaved changes'; S.settingsOk = false; S.settingsDirty = true; if (m) {m.textContent = S.settingsErr; m.className = 'err'}};
+  if (sf) sf.onsubmit = e => {e.preventDefault(); const s = JSON.parse(JSON.stringify(ST.settings)); const v = id => M.querySelector('#' + id).value, n = id => +v(id);
     Object.assign(s.connection, {host: v('s-host'), port: n('s-port'), client_id: n('s-cid'), market_data_type: v('s-mdt')});
     s.load.max_lines = n('s-lines');
     Object.assign(s.earnings, {finnhub_api_key: v('s-fh'), days_ahead: n('s-days'), min_market_cap_billions: n('s-cap'), max_symbols_per_day: n('s-maxd'),
@@ -523,7 +528,7 @@ function bind() {
     Object.assign(s.strategy, {ba_pass_percent: n('s-bap'), ba_review_percent: n('s-bar'), iv_edge_points: n('s-edge'), skip_back_iv_points: n('s-skip'),
       screen_days_ahead: n('s-ahead'), screen_minutes: n('s-every'), crush_mode: v('s-cm'), crush_percent: n('s-crush'), gap_basis: v('s-basis'),
       lookback: n('s-lb'), strong_hits: n('s-strong'), acceptable_hits: n('s-acc'), risk_free_rate: n('s-rate') / 100, budget: n('s-budget')});
-    post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; document.activeElement.blur(); resetControls(true); render()})};
+    post('/api/settings', s).then(r => {S.settingsErr = r.errors ? r.errors.join(' ') : 'Saved.'; S.settingsOk = !r.errors; if (!r.errors) S.settingsDirty = false; document.activeElement.blur(); resetControls(true); if (r.errors) {const m = M.querySelector('#set-msg'); if (m) {m.textContent = S.settingsErr; m.className = 'err'}} else render()})};
 }
 function alertMsg(t) {ST.messages.push({time: new Date().toLocaleTimeString(), level: 'warning', text: t}); render()}
 function resetControls(force) {
