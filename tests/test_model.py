@@ -149,3 +149,19 @@ def test_put_calendar_uses_put_quotes():
     a = M.analyze(c, M.Params(rate=0.02, right="P"))
     assert a["right"] == "P" and not a["call"] and a["fq"] == [5.70, 5.95] and a["bq"] == [6.10, 6.50]
     assert a["natural"] == pytest.approx(0.80) and a["meg"] > 0
+
+
+def test_default_strike_rules():
+    ks = [150.0, 152.5, 155.0, 157.5]
+    assert M.default_strike(ks, 153.09) == 155.0                       # the course trade: RHT 155C
+    assert M.default_strike(ks, 153.09, "nearest_otm") == 152.5        # the course spreadsheet: 152.5P
+    assert M.default_strike(ks, 155.0) == 155.0
+    assert M.default_strike(ks, 158.0) == 157.5                        # nothing above: nearest
+
+
+def test_pick_back_keeps_review_leg():
+    # the course traded RHT's Apr 06 155C at 4.20 / 4.70 (112%, review) rather than moving to a later expiry
+    chain = {"20180329": {"C": {155.0: {"bid": 3.8, "ask": 4.0, "iv": .845}}},
+             "20180406": {"C": {155.0: {"bid": 4.2, "ask": 4.7, "iv": .499}}},
+             "20180413": {"C": {155.0: {"bid": 4.9, "ask": 5.1, "iv": .46}}}}
+    assert M.pick_back(chain, ["20180329", "20180406", "20180413"], 155.0, "C") == ("20180406", "")

@@ -542,7 +542,7 @@ class App:
         near = below + above
         if not near:
             raise ScreenError("No strikes near the price.")
-        K = min(near, key=lambda k: abs(k - S))
+        K = M.default_strike(near, S, st.strike_rule)
         c.update(expiries=[front] + backs, front=front, strikes=near, K=K, multiplier=chain.multiplier,
                  trading_class=chain.tradingClass)
 
@@ -592,19 +592,44 @@ class App:
         return M.Params.from_strategy(self.cfg.strategy, **over)
 
     def analyze_default(self, c: dict):
+        if c.get("S") and c.get("chain") and c.get("front") and c.get("strikes"):
+            K = M.default_strike(c["strikes"], c["S"], self.cfg.strategy.strike_rule)
+            if K != c.get("K"):                     # the strike rule changed in Settings: same quotes, new legs
+                c["K"] = K
+                c["back"], c["back_reason"] = self.pick_back(c)
+                c["back_by_right"] = {r: None for r in ("C", "P")}
+                c["back_reason_by_right"] = {}
+                for r in ("C", "P"):
+                    c["back_by_right"][r], c["back_reason_by_right"][r] = self.pick_back(c, r)
         if c.get("S") and c.get("chain") and c.get("front"):
             c["a"] = M.analyze(c, self.params())
             # the same strike on the other side: a put calendar when the default is a call, and the reverse
             other = "P" if c["a"].get("right") == "C" else "C"
             c["a_alt"] = M.analyze(c, self.params(right=other))
+            c["by_strike"] = self.strike_table(c)
         else:
-            c["a"], c["a_alt"] = {}, {}
+            c["a"], c["a_alt"], c["by_strike"] = {}, {}, []
         c["stage"] = M.stage(c, c["a"]) if c.get("state") == "ready" else (
             {"k": "verify", "lbl": "Needs verification", "cls": "p-bad"} if not c["verified"] else
             {"k": "data", "lbl": {"loading": "Loading", "error": "No data"}.get(c.get("state"), "Not screened yet"),
              "cls": "p-neutral"})
         if c.get("state") == "ready" and c.get("quotes_live") is False and c["stage"]["k"] in ("ba", "data"):
             c["stage"] = {"k": "closed", "lbl": "Market closed: quotes not live", "cls": "p-neutral"}
+
+    def strike_table(self, c: dict) -> list[dict]:
+        """The Is / Was screen at every nearby strike, call and put, at the settings' crush: there is no fixed strike
+        rule beyond the course's default, so the page lets you compare IV, debit and endurable gap across strikes."""
+        keep = ("K", "right", "front", "back", "fIV", "bIV", "ivDiff", "baRatio", "baOverall", "entry", "meg", "hits",
+                "n", "verdict", "error")
+        out = []
+        for k in c.get("strikes") or []:
+            for r in ("C", "P"):
+                try:
+                    a = M.analyze(c, self.params(K=float(k), right=r))
+                except Exception as e:  # noqa: BLE001
+                    a = {"K": k, "right": r, "error": str(e)}
+                out.append({f: a.get(f) for f in keep} | {"K": float(k), "right": r})
+        return out
 
     def analyze(self, symbol: str, body: dict) -> dict:
         c = self.cands.get(symbol)

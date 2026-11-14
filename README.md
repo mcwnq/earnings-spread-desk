@@ -52,8 +52,9 @@ Without a Finnhub key every date is "1 source". It still works, but check those 
   enter on D−1 and exit on D. Weekends and NYSE holidays are skipped.
 * **Legs.** The short leg is the first expiry on or after the exit session. The long leg is the next expiry, unless
   its IV is still 8+ points above the following one (LULU in the course) or its market fails bid-ask. Then the next 3
-  expiries are tried, and the first that passes is used. The default strike is the one closest to the price, on the
-  out-of-the-money side: a call when the strike is at or above the price, a put below it.
+  expiries are tried, and the first that passes or is at "review" is used. The default strike is the one the course trades: the nearest
+  call at or above the price (RHT at 153.09 → 155C). The put calendar at the same strike is shown next to it, and
+  any other strike can be picked on the Is / Was page.
 * **Call and put calendars.** Both sides are quoted at the 4 strikes nearest the price. The Is / Was page shows the
   call and put calendars side by side, and the screener shows how the other side would rate.
 * **Bid-ask.** Ask ≤ 110% of bid on both legs passes, up to 120% is "review", and above that fails.
