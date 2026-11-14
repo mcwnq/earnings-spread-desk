@@ -493,7 +493,15 @@ function vResults() {
   const other = S.resSide === 'other';
   const recs = [...(ST.journal || [])].sort((x, y) => y.entry_date.localeCompare(x.entry_date) || x.symbol.localeCompare(y.symbol));
   const sideOf = r => {const d = r.default_right; const k = other ? Object.keys(r.sides).find(x => x !== d) : d; return k ? {k, s: r.sides[k]} : null};
+  const model = ['target', 'mult', 'retrace'].includes(S.resModel) ? S.resModel : 'screened';
+  const MN = {screened: 'As screened', target: 'Target vol', mult: 'Front IV × %', retrace: 'Retrace'};
   const group = (r, sd) => {
+    if (model !== 'screened') {      // the same spread judged by another crush model (recorded at entry)
+      if (sd.s.baOverall === 'fail') return 'Fails bid-ask';
+      if (sd.s.yes === false) return 'Did not pass screens';
+      const m = (sd.s.models || {})[model];
+      return m && m.verdict && m.verdict !== 'n/a' ? m.verdict : 'No Is / Was';
+    }
     if (!other) return r.stage_k === 'ok' ? sd.s.verdict : r.stage_k === 'iw' ? 'Weak' : 'Did not pass screens';
     if (sd.s.baOverall === 'fail') return 'Fails bid-ask';
     return sd.s.verdict && sd.s.verdict !== 'n/a' ? sd.s.verdict : 'No Is / Was';
@@ -507,13 +515,15 @@ function vResults() {
   return `${banner()}<div class="head"><div><h1>Forward test</h1><p>Every candidate's last-hour screen on its entry day is saved, passed or not, with both the call and the put calendar. The next session the same spreads are quoted at ${checks.join(', ')} ET and priced to sell at the spread bid + 25% of the width. P&L is per spread against the 25-20 entry price. Nothing is traded.</p></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="seg">${checks.map(c => `<button data-rcheck="${c}" class="${c === chk ? 'on' : ''}">${c}</button>`).join('')}</span>
   <span class="seg"><button data-rside="default" class="${other ? '' : 'on'}">Default side</button><button data-rside="other" class="${other ? 'on' : ''}">Other side</button></span>
+  <span class="seg">${Object.entries(MN).map(([k, v]) => `<button data-rmodel="${k}" class="${model === k ? 'on' : ''}">${v}</button>`).join('')}</span>
   <a class="btn" href="/api/journal.csv">Download CSV</a></div></div>
-  ${recs.length ? `<div class="panel"><div class="ph"><h2>By verdict at ${chk} ET</h2><span class="muted" style="font-size:12px">${other ? 'the other side of each strike' : 'the side the screens chose'}</span></div><div class="tbl-wrap"><table><thead><tr><th>Group</th><th class="r">Candidates</th><th class="r">Priced at ${chk}</th><th class="r">Winners</th><th class="r">Win rate</th><th class="r">Avg P&L / spread</th><th class="r">Total</th></tr></thead><tbody>
+  ${recs.length ? `<div class="panel"><div class="ph"><h2>By verdict at ${chk} ET · ${MN[model]}</h2><span class="muted" style="font-size:12px">${other ? 'the other side of each strike' : 'the side the screens chose'}${model !== 'screened' ? ' · verdicts under this crush model, same spreads and P&L' : ''}</span></div><div class="tbl-wrap"><table><thead><tr><th>Group</th><th class="r">Candidates</th><th class="r">Priced at ${chk}</th><th class="r">Winners</th><th class="r">Win rate</th><th class="r">Avg P&L / spread</th><th class="r">Total</th></tr></thead><tbody>
    ${order.filter(k => G[k]).map(k => {const g = G[k]; return `<tr><td>${k}</td><td class="r num">${g.n}</td><td class="r num">${g.done}</td><td class="r num">${g.wins}</td><td class="r num">${g.done ? pct(g.wins / g.done * 100, 0) : '—'}</td><td class="r num">${g.done ? money(g.sum / g.done) : '—'}</td><td class="r num">${g.done ? money(g.sum) : '—'}</td></tr>`}).join('')}
    </tbody></table></div></div>
-  <div class="panel" style="margin-top:14px"><h2 style="margin-bottom:8px">Candidates</h2><div class="tbl-wrap"><table><thead><tr><th>Entered</th><th>Ticker</th><th>Report</th><th>Screens</th><th>Calendar</th><th class="r">Entry</th>${checks.map(c => `<th class="r">${c}</th>`).join('')}<th class="r">Stock move</th></tr></thead><tbody>
+  <div class="panel" style="margin-top:14px"><h2 style="margin-bottom:8px">Candidates</h2><div class="tbl-wrap"><table><thead><tr><th>Entered</th><th>Ticker</th><th>Report</th><th>Screens</th><th title="past gaps inside the endurable gap under each crush model">Target · ×% · Retrace</th><th>Calendar</th><th class="r">Entry</th>${checks.map(c => `<th class="r">${c}</th>`).join('')}<th class="r">Stock move</th></tr></thead><tbody>
    ${recs.map(r => {const sd = sideOf(r); if (!sd) return ''; const s = sd.s; const last = checks.map(c => r.exits[c]).filter(Boolean).pop();
      return `<tr><td>${fmtD(r.entry_date)}</td><td class="tk">${r.symbol}</td><td>${fmtE(r.report)} ${pill(r.timing, 'p-neutral')}</td><td>${other ? pill(group(r, sd), 'p-neutral') : pill(r.stage || '—', r.stage_k === 'ok' ? 'p-good' : r.stage_k === 'iw' ? 'p-warn' : 'p-neutral')}</td>
+     <td class="num">${['target', 'mult', 'retrace'].map(m => {const x = (s.models || {})[m]; return x && x.n ? `<span title="${esc(MN[m] + ': ' + x.verdict + ', endurable ' + (x.meg != null ? x.meg.toFixed(2) + '%' : '—'))}" style="color:var(${x.verdict === 'Strong' ? '--good' : x.verdict === 'Acceptable' ? '--warn' : '--muted'})">${x.hits}/${x.n}</span>` : '<span class="muted">—</span>'}).join(' · ')}</td>
      <td class="mono">${s.K}${s.right} ${fmtE(s.front)}/${fmtE(s.back)}</td><td class="r num">${f2(s.entry)}</td>
      ${checks.map(c => {const q = ((r.exits[c] || {}).sides || {})[sd.k]; return `<td class="r num">${q && q.pnl != null ? money(q.pnl) + `<div class="muted" style="font-size:11px">@ ${f2(q.offer)}</div>` : q && q.error ? '<span class="muted">no market</span>' : r.exit_date > today() || (r.exit_date === today() && !r.exits[c]) ? '<span class="muted">' + fmtE(r.exit_date) + '</span>' : '<span class="muted">missed</span>'}</td>`}).join('')}
      <td class="r num">${last && last.move != null ? (last.move >= 0 ? '+' : '') + last.move.toFixed(2) + '%' : '—'}</td></tr>`}).join('')}
@@ -608,6 +618,7 @@ function bind() {
   M.querySelectorAll('[data-trade]').forEach(x => {const f = () => {S.exitSel = x.dataset.trade; render()}; x.onclick = f; x.onkeydown = e => {if (e.key === 'Enter' || e.key === ' ') {e.preventDefault(); f()}}});
   M.querySelectorAll('[data-rcheck]').forEach(x => x.onclick = () => {S.resCheck = x.dataset.rcheck; render()});
   M.querySelectorAll('[data-rside]').forEach(x => x.onclick = () => {S.resSide = x.dataset.rside; render()});
+  M.querySelectorAll('[data-rmodel]').forEach(x => x.onclick = () => {S.resModel = x.dataset.rmodel; render()});
   const sim = M.querySelector('#simulate'); if (sim) sim.onclick = () => {
     S.ladder = {tk: sel().symbol, step: 0}; render(); let i = 0;
     const iv = setInterval(() => {i++; if (!S.ladder || i > 6) {clearInterval(iv); return} S.ladder.step = i; render()}, 600)};

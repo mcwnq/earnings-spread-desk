@@ -17,6 +17,7 @@ from . import model as M
 from .store import Store
 
 log = logging.getLogger("earningsdesk")
+MODELS = ("target", "mult", "retrace")    # crush models recorded for every side (config.CRUSH_MODES)
 SIDE_FIELDS = ("right", "K", "front", "back", "fq", "bq", "fIV", "bIV", "natural", "inside", "width", "entry",
                "baOverall", "ivDiff", "yes", "meg", "hits", "n", "med", "verdict", "beLo", "beHi")
 
@@ -57,6 +58,7 @@ class Journal:
         for x in (a, alt):
             snap = side_snapshot(x)
             if snap:
+                snap["models"] = (c.get("by_model") or {}).get(snap["right"]) or {}
                 sides[snap["right"]] = snap
         if not sides:
             return None
@@ -107,7 +109,7 @@ class Journal:
         w = csv.writer(buf)
         head = ["entry_date", "exit_date", "symbol", "report", "timing", "stage", "side", "default_side", "K", "front",
                 "back", "S_entry", "entry_25_20", "natural", "ba_overall", "iv_edge", "endurable_gap", "hits", "n",
-                "median_gap", "verdict"]
+                "median_gap", "verdict"] + [f"{f}_{m}" for m in MODELS for f in ("endurable_gap", "hits", "verdict")]
         for t in checks:
             head += [f"S_{t}", f"move_{t}", f"offer_{t}", f"pnl_{t}"]
         w.writerow(head)
@@ -117,6 +119,9 @@ class Journal:
                        "yes" if right == r.get("default_right") else "no", s["K"], s["front"], s["back"], r.get("S"),
                        s["entry"], _r(s["natural"]), s["baOverall"], _r(s.get("ivDiff")), _r(s.get("meg")), s.get("hits"),
                        s.get("n"), _r(s.get("med")), s.get("verdict")]
+                for m in MODELS:
+                    mm = (s.get("models") or {}).get(m) or {}
+                    row += [_r(mm.get("meg")), mm.get("hits"), mm.get("verdict")]
                 for t in checks:
                     e = r["exits"].get(t) or {}
                     q = (e.get("sides") or {}).get(right) or {}

@@ -93,6 +93,14 @@ def test_forward_test_end_to_end(tmp_path):
             assert pnl == rht["exits"]["09:45"]["sides"]["P"]["pnl"]
             assert {r["symbol"] for r in app.store.screens()} >= {"RHT", "PAYX"}
             assert app.store.screens("RHT")[0]["side"] == "C"
+            # every side carries its verdict under all three crush models, same legs
+            assert set(rht["sides"]["C"]["models"]) == {"target", "mult", "retrace"}
+            assert rht["sides"]["C"]["models"]["mult"]["verdict"] == "Strong"          # the course's 6/7 at x80%
+            assert rht["sides"]["C"]["models"]["target"]["hits"] < 6
+            rows = db.execute("SELECT model, verdict FROM journal_models WHERE record_id='2018-03-26|RHT' AND side='C'")
+            assert dict(rows.fetchall())["mult"] == "Strong"
+            head = app.journal.csv(["09:45"]).splitlines()[0]
+            assert "verdict_target" in head and "endurable_gap_retrace" in head
         finally:
             await app.shutdown()
     asyncio.run(run())

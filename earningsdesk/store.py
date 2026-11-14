@@ -3,6 +3,7 @@
 Tables
   journal         one row per forward-test candidate (entry day + symbol); `data` holds the whole record as JSON
   journal_sides   the call and put calendar at entry, one row per side, in columns you can query
+  journal_models  each side's endurable gap and verdict under every crush model (target, mult, retrace)
   journal_exits   the next-day checks, one row per check time and side, with the close offer and P&L
   screens         every finished screen: price, stage and both sides' key numbers, so the screens can be judged later
   trades          the fills you recorded yourself on the exit page (this app places no orders)
@@ -42,6 +43,10 @@ CREATE TABLE IF NOT EXISTS journal_exits (
     at TEXT, S REAL, move_pct REAL, front_bid REAL, front_ask REAL, back_bid REAL, back_ask REAL,
     spread_bid REAL, spread_ask REAL, offer REAL, pnl REAL, pnl_pct REAL, error TEXT,
     PRIMARY KEY (record_id, check_time, side));
+CREATE TABLE IF NOT EXISTS journal_models (
+    record_id TEXT NOT NULL REFERENCES journal(id) ON DELETE CASCADE, side TEXT NOT NULL, model TEXT NOT NULL,
+    endurable_gap REAL, hits INTEGER, n INTEGER, verdict TEXT, front_iv_after REAL, back_iv_after REAL,
+    target_vol REAL, PRIMARY KEY (record_id, side, model));
 CREATE TABLE IF NOT EXISTS screens (
     id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, symbol TEXT, report TEXT, timing TEXT, entry_date TEXT,
     S REAL, state TEXT, quotes_live INTEGER, stage TEXT, side TEXT, strike REAL, front TEXT, back TEXT,
@@ -85,6 +90,12 @@ class Store:
                  r.get("recorded"), json.dumps(r)))
             self.db.execute("DELETE FROM journal_sides WHERE record_id=?", (r["id"],))
             self.db.execute("DELETE FROM journal_exits WHERE record_id=?", (r["id"],))
+            self.db.execute("DELETE FROM journal_models WHERE record_id=?", (r["id"],))
+            for side, s in (r.get("sides") or {}).items():
+                for model, m in (s.get("models") or {}).items():
+                    self.db.execute("INSERT INTO journal_models VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                    (r["id"], side, model, m.get("meg"), m.get("hits"), m.get("n"), m.get("verdict"),
+                                     m.get("fIV1"), m.get("bIV1"), m.get("target")))
             for side, s in (r.get("sides") or {}).items():
                 self.db.execute(
                     "INSERT INTO journal_sides VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

@@ -493,8 +493,27 @@ class App:
         if not (self.cfg.strategy.record_forward_test and c.get("state") == "ready" and c.get("quotes_live")
                 and in_entry_window(now) and c["entry"] == now.date().isoformat()):
             return
+        c["by_model"] = self.models_for_sides(c)
         if self.journal.record_entry(c, now) is not None:
             self.broadcast({"type": "journal", "journal": self.journal.records[-300:]})
+
+    def models_for_sides(self, c: dict) -> dict:
+        """Forward test: each side's endurable gap and verdict under every crush model, same legs, so the results
+        can show which model's verdicts pick the spreads that made money."""
+        out = {}
+        for a in (c.get("a") or {}, c.get("a_alt") or {}):
+            if not a.get("right") or a.get("K") is None:
+                continue
+            per = {}
+            for mode in config_mod.CRUSH_MODES:
+                try:
+                    m = M.analyze(c, self.params(K=a["K"], right=a["right"], front=a.get("front"), back=a.get("back"),
+                                                 crush_mode=mode))
+                except Exception:  # noqa: BLE001
+                    continue
+                per[mode] = {k: m.get(k) for k in ("meg", "hits", "n", "verdict", "fIV1", "bIV1", "target")}
+            out[a["right"]] = per
+        return out
 
     async def _journal_loop(self):
         while True:
