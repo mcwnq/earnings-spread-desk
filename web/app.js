@@ -336,7 +336,7 @@ function vAnalyze() {
      ${feed(`Black-Scholes, r=${(strat().risk_free_rate * 100).toFixed(1)}% · front ${ivp(a.fIV)}→${ivp(a.fIV1)} IV, ${a.daysFront}d left · back ${ivp(a.bIV)}→${ivp(a.bIV1)} IV, ${a.daysBack}d left · per spread ×100 · IV = IBKR model IV per leg`)}
      <div style="margin-top:14px">${ivByStrike(t, a)}</div></div>
    <div class="grid" style="align-content:start">
-    <div class="verdict ${vb}"><div><div class="big">${a.verdict}</div><div style="font-size:12.5px">${a.noProfit ? 'The modeled spread loses money the day after even if the stock doesn't move, so it endures no gap.' : `${a.hits} of ${a.n} past gaps were smaller than ${pct(a.meg)}.`}${a.straddle ? ' The endurable gap is below the median gap, so check the straddle playbook.' : ''}</div></div></div>
+    <div class="verdict ${vb}"><div><div class="big">${a.verdict}</div><div style="font-size:12.5px">${a.noProfit ? 'The modeled spread loses money the day after even with no move in the stock, so it endures no gap.' : `${a.hits} of ${a.n} past gaps were smaller than ${pct(a.meg)}.`}${a.straddle ? ' The endurable gap is below the median gap, so check the straddle playbook.' : ''}</div></div></div>
     ${a.front !== t.front ? `<div class="note"><b>Short leg is not the earnings expiry.</b> The course shorts the first expiry after earnings (${fmtE(t.front)}), so the short option carries the IV that gets crushed.</div>` : ''}
     ${t.gap_note ? `<div class="note">${esc(t.gap_note)} They are marked * and drawn lighter.</div>` : ''}
     <div class="panel"><div class="grid g2">

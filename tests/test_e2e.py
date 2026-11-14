@@ -136,3 +136,16 @@ def test_after_hours_label():
     c2 = {**c, "quotes_live": True}
     app.analyze_default(c2)
     assert c2["stage"]["k"] != "closed"
+
+
+def test_page_script_parses():
+    # a syntax error in app.js leaves the page stuck on "Loading..."
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    js = Path(__file__).resolve().parent.parent / "web" / "app.js"
+    r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
