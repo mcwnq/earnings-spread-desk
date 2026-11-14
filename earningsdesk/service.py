@@ -477,7 +477,7 @@ class App:
         if (parse_expiry(front) - exit_).days > 10:
             raise ScreenError(f"The first expiry after the report is {parse_expiry(front):%b %d}, more than 10 days "
                               "later: no weekly options to sell into the report.")
-        backs = [e for e in exps[1:] if (parse_expiry(e) - date.fromisoformat(c["entry"])).days <= st.max_back_days][:3]
+        backs = [e for e in exps[1:] if (parse_expiry(e) - date.fromisoformat(c["entry"])).days <= st.max_back_days][:4]
         if not backs:
             raise ScreenError("No later expiry for the long leg within the allowed days.")
         strikes = sorted(set(chain.strikes))
@@ -491,10 +491,10 @@ class App:
                  trading_class=chain.tradingClass)
 
         legs = []
-        for e in [front] + backs:
+        for e in [front] + backs:            # calls and puts at every strike: both calendars, and the straddle
             for k in near:
-                legs.append((e, k, "C" if k >= S else "P"))
-        legs.append((front, K, "P" if K >= S else "C"))   # the other side at the strike, for the straddle check
+                legs.append((e, k, "C"))
+                legs.append((e, k, "P"))
         opts = [Option(sym, e, k, r, "SMART", tradingClass=chain.tradingClass, currency="USD") for e, k, r in legs]
         qualified = await asyncio.gather(*[self._details(o, f"{sym} {o.lastTradeDateOrContractMonth} {o.strike}{o.right}")
                                            for o in opts], return_exceptions=True)
@@ -511,6 +511,9 @@ class App:
             book.setdefault(e, {}).setdefault(r, {})[float(k)] = {**qq, "conId": o.conId}
         c["chain"] = book
         c["back"], c["back_reason"] = self.pick_back(c)
+        c["back_by_right"], c["back_reason_by_right"] = {}, {}
+        for r in ("C", "P"):
+            c["back_by_right"][r], c["back_reason_by_right"][r] = self.pick_back(c, r)
 
         try:
             bars = await self.bars(stock)
@@ -522,24 +525,11 @@ class App:
         except ScreenError as e:
             c["gaps"], c["gap_note"] = [], f"No gap history: {e}"
 
-    def pick_back(self, c: dict) -> tuple[str | None, str]:
-        """Next consecutive expiry for the long leg, unless its IV is still high or its market is wide (slide 11)."""
-        exps, S, K = c["expiries"], c["S"], c["K"]
-        r = "C" if K >= S else "P"
-        if len(exps) < 2:
-            return None, ""
-        b1 = M.quote(c["chain"], exps[1], r, K)
-        b2 = M.quote(c["chain"], exps[2], r, K) if len(exps) > 2 else None
-        if b1 and b2 and b1.get("iv") and b2.get("iv"):
-            gap = (b1["iv"] - b2["iv"]) * 100
-            if gap >= self.cfg.strategy.skip_back_iv_points:
-                return exps[2], f"Skipped {parse_expiry(exps[1]):%b %d}: its IV is still {gap:.1f} pts above the next expiry."
-        if b1 and b2 and all(_pos(x) for x in (b1.get("bid"), b1.get("ask"), b2.get("bid"), b2.get("ask"))):
-            s1 = M.ba_status(b1["ask"] / b1["bid"], self.cfg.strategy.ba_pass_percent, self.cfg.strategy.ba_review_percent)
-            s2 = M.ba_status(b2["ask"] / b2["bid"], self.cfg.strategy.ba_pass_percent, self.cfg.strategy.ba_review_percent)
-            if s1 == "fail" and s2 == "pass":
-                return exps[2], f"Skipped {parse_expiry(exps[1]):%b %d}: its market is too wide."
-        return exps[1], ""
+    def pick_back(self, c: dict, right: str | None = None) -> tuple[str | None, str]:
+        st = self.cfg.strategy
+        r = right or ("C" if c["K"] >= c["S"] else "P")
+        return M.pick_back(c["chain"], c["expiries"], c["K"], r, st.skip_back_iv_points, st.ba_pass_percent,
+                           st.ba_review_percent)
 
     # ------------------------------------------------------------------ analysis
     def params(self, **over) -> M.Params:
@@ -548,8 +538,11 @@ class App:
     def analyze_default(self, c: dict):
         if c.get("S") and c.get("chain") and c.get("front"):
             c["a"] = M.analyze(c, self.params())
+            # the same strike on the other side: a put calendar when the default is a call, and the reverse
+            other = "P" if c["a"].get("right") == "C" else "C"
+            c["a_alt"] = M.analyze(c, self.params(right=other))
         else:
-            c["a"] = {}
+            c["a"], c["a_alt"] = {}, {}
         c["stage"] = M.stage(c, c["a"]) if c.get("state") == "ready" else (
             {"k": "verify", "lbl": "Needs verification", "cls": "p-bad"} if not c["verified"] else
             {"k": "data", "lbl": {"loading": "Loading", "error": "No data"}.get(c.get("state"), "Not screened yet"),

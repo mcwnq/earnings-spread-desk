@@ -103,3 +103,49 @@ def test_stage_and_rank():
     weak = {**a, "verdict": "Weak", "straddle": True}
     assert M.stage(c, weak)["lbl"] == "Straddle candidate"
     assert sorted([{"hits": 5, "meg": 9, "med": 5}, {"hits": 6, "meg": 6, "med": 5}], key=M.rank_key)[0]["hits"] == 6
+
+
+def _q(b, a, iv):
+    return {"bid": b, "ask": a, "iv": iv}
+
+
+def test_pick_back_next_expiry_when_it_passes():
+    c = rht_candidate()
+    e, why = M.pick_back(c["chain"], c["expiries"], 155.0, "C", skip_iv_points=8)
+    assert e == "20180406" and why == ""          # 112% is "review" but Apr 13 (4.60/5.10, 111%) is no better
+
+
+def test_pick_back_tries_later_expiries_when_wide():
+    exps = ["20180329", "20180406", "20180413", "20180420", "20180427"]
+    chain = {"20180406": {"C": {50.0: _q(1.00, 1.40, 0.30)}},      # 140%: fails
+             "20180413": {"C": {50.0: _q(1.20, 1.45, 0.29)}},      # 121%: fails
+             "20180420": {"C": {50.0: _q(1.40, 1.50, 0.28)}},      # 107%: passes
+             "20180427": {"C": {50.0: _q(1.50, 1.60, 0.27)}}}
+    e, why = M.pick_back(chain, exps, 50.0, "C")
+    assert e == "20180420"
+    assert why.startswith("Long leg moved to Apr 20") and "Apr 06: market too wide" in why and "Apr 13" in why
+
+
+def test_pick_back_review_and_no_pass():
+    exps = ["20180329", "20180406", "20180413"]
+    chain = {"20180406": {"P": {50.0: _q(1.00, 1.40, 0.30)}}, "20180413": {"P": {50.0: _q(1.00, 1.15, 0.29)}}}
+    assert M.pick_back(chain, exps, 50.0, "P")[0] == "20180413"    # review beats fail
+    chain["20180413"]["P"][50.0] = _q(1.00, 1.50, 0.29)
+    assert M.pick_back(chain, exps, 50.0, "P") == ("20180406", "")  # nothing better: keep the next expiry
+    assert M.pick_back({}, ["20180329"], 50.0, "P") == (None, "")
+
+
+def test_pick_back_skips_high_iv():
+    exps = ["20180329", "20180406", "20180413"]
+    chain = {"20180406": {"C": {80.0: _q(3.50, 3.75, 0.699)}}, "20180413": {"C": {80.0: _q(3.80, 4.30, 0.606)}}}
+    e, why = M.pick_back(chain, exps, 80.0, "C", skip_iv_points=8)
+    assert e == "20180413" and "IV still 9.3 pts" in why            # LULU, slide 27
+
+
+def test_put_calendar_uses_put_quotes():
+    c = rht_candidate()
+    c["chain"]["20180329"]["P"] = {155.0: _q(5.70, 5.95, 0.85)}
+    c["chain"]["20180406"]["P"] = {155.0: _q(6.10, 6.50, 0.50)}
+    a = M.analyze(c, M.Params(rate=0.02, right="P"))
+    assert a["right"] == "P" and not a["call"] and a["fq"] == [5.70, 5.95] and a["bq"] == [6.10, 6.50]
+    assert a["natural"] == pytest.approx(0.80) and a["meg"] > 0

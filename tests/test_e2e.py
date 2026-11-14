@@ -16,7 +16,7 @@ async def _run(tmp_path, body):
     app = build_app(cfg, str(tmp_path / "settings.json"), demo=True)
     await app.start()
     try:
-        for _ in range(400):
+        for _ in range(1200):
             await asyncio.sleep(0.1)
             if app.cands and all(c["state"] in ("ready", "error") for c in app.cands.values()):
                 break
@@ -44,6 +44,12 @@ def test_sample_week_end_to_end(tmp_path):
         assert [round(g["gap"], 2) for g in c["RHT"]["gaps"]] == [2.53, 5.24, 9.96, 5.35, 11.89, 6.45, 5.57]
         assert c["LULU"]["back"] == "20180413" and "Skipped Apr 06" in c["LULU"]["back_reason"]   # slide 27
         assert c["CTAS"]["stage"]["k"] == "ba"
+        # the Apr 06 long leg is too wide for PAYX, so the screen moves to Apr 13
+        assert c["PAYX"]["back"] == "20180413" and "Apr 06: market too wide" in c["PAYX"]["back_reason"]
+        assert c["PAYX"]["a"]["back"] == "20180413" and c["PAYX"]["a"]["baOverall"] != "fail"
+        # both calendars at the default strike: RHT 152.5 is a put by default, the call is the course's slide quotes
+        assert c["RHT"]["a"]["right"] == "P" and c["RHT"]["a_alt"]["right"] == "C"
+        assert c["RHT"]["a_alt"]["fq"] == [5.00, 5.30] and c["RHT"]["a_alt"]["bq"] == [5.60, 6.00]
         assert all(g["source"] == "inferred" for g in c["CTAS"]["gaps"])
         assert c["PVH"]["stage"]["lbl"] == "Straddle candidate"
         assert c["MKC"]["stage"]["k"] == "yn"

@@ -63,6 +63,7 @@ SLIDE_QUOTES = {
 RHT_PAST = [("2017-12-19", 128.86, 125.60), ("2017-09-21", 105.76, 111.30), ("2017-06-21", 89.96, 98.92),
             ("2017-03-27", 82.20, 86.60), ("2016-12-21", 79.79, 70.30), ("2016-09-21", 77.04, 82.01),
             ("2016-06-22", 79.75, 75.31)]
+WIDE_BACK = {("PAYX", "20180406"): 3.0}   # a long leg whose market is too wide: the screen moves to the next expiry
 NO_FINNHUB_HISTORY = {"CTAS"}       # shows past dates found from the bars ("inferred")
 NASDAQ_DATE = {"FINL": "2018-03-28"}  # Nasdaq and Finnhub disagree: a conflict to resolve on the Calendar page
 
@@ -133,7 +134,7 @@ def option_quote(sym: str, expiry: str, K: float, right: str, now: datetime) -> 
         return hit[0], hit[1], iv
     T = (date(int(expiry[:4]), int(expiry[4:6]), int(expiry[6:])) - now.date()).days / 365
     mid = bs(S, K, T, iv, right == "C", 0.02)
-    half = max(0.02, mid * sp / 2)
+    half = max(0.02, mid * sp / 2) * WIDE_BACK.get((sym, expiry), 1.0)
     q = lambda x: round(x, 2) if x < 3 else round(x * 20) / 20
     return max(0.01, q(mid - half)), q(mid + half), iv
 

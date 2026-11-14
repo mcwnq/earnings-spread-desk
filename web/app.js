@@ -35,29 +35,40 @@ const today = () => (ST.connection.clock_date || iso(new Date()));
 const limit = () => S.exp === 'new' ? 1 : 5;
 const lb = () => strat().lookback || 7;
 
-function params(t) {
+function mainRight(t) {
+  const p = S.P[t.symbol] || {}, K = p.K ?? t.K;
+  return p.right ?? (K >= t.S ? 'C' : 'P');
+}
+function params(t, right) {
   const p = S.P[t.symbol] || {};
-  return {symbol: t.symbol, K: p.K ?? null, front: p.front ?? null, back: p.back ?? null, crush_mode: S.crushMode,
+  return {symbol: t.symbol, K: p.K ?? null, right, front: p.front ?? null, back: p.back ?? null, crush_mode: S.crushMode,
           crush_percent: S.crush, back_iv_change_percent: S.backChg, gap_basis: S.basis};
 }
 function isDefault(t) {
   const p = S.P[t.symbol] || {}, s = strat();
-  return p.K == null && p.front == null && p.back == null && S.crushMode === s.crush_mode && S.crush === s.crush_percent &&
-         S.backChg === s.back_iv_change_percent && S.basis === s.gap_basis;
+  return p.K == null && p.front == null && p.back == null && (p.right == null || p.right === (t.a || {}).right) &&
+         S.crushMode === s.crush_mode && S.crush === s.crush_percent && S.backChg === s.back_iv_change_percent && S.basis === s.gap_basis;
 }
-/* the analysis for the page's controls: the server's default one, or one asked for with these controls */
-function A(t) {
+/* the analysis for the page's controls: the server's default one, or one asked for with these controls.
+   side 'alt' is the same strike on the other side (put calendar for a call one, and the reverse) */
+function A(t, side) {
   if (!t) return {};
-  if (isDefault(t)) return t.a || {};
-  const key = JSON.stringify(params(t)) + '|' + (t.screened || '');
-  const hit = AN[t.symbol];
+  const r = side === 'alt' ? (mainRight(t) === 'C' ? 'P' : 'C') : mainRight(t);
+  if (isDefault(t)) {
+    const d = t.a || {}, alt = t.a_alt || {};
+    if (!d.right || d.right === r) return d;
+    if (alt.right === r) return alt;
+  }
+  const slot = t.symbol + '|' + r;
+  const key = JSON.stringify(params(t, r)) + '|' + (t.screened || '');
+  const hit = AN[slot];
   if (hit && hit.key === key) return hit.a;
   if (!hit || hit.pending !== key) {
-    AN[t.symbol] = {...(hit || {}), pending: key};
-    fetch('/api/analyze', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(params(t))})
-      .then(r => r.json()).then(a => {AN[t.symbol] = {key, a}; render()}).catch(() => {});
+    AN[slot] = {...(hit || {}), pending: key};
+    fetch('/api/analyze', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(params(t, r))})
+      .then(x => x.json()).then(a => {AN[slot] = {key, a}; render()}).catch(() => {});
   }
-  return hit ? hit.a : (t.a || {});
+  return hit && hit.a ? hit.a : (side === 'alt' ? (t.a_alt || {}) : (t.a || {}));
 }
 function q(t, e, r, K) {return (t.chain || []).find(x => x.expiry === e && x.right === r && Math.abs(x.strike - K) < 1e-6)}
 const stage = t => t.stage || {k: 'data', lbl: '—', cls: 'p-neutral'};
@@ -175,6 +186,14 @@ function vCalendar() {
   </div>`;
 }
 
+function otherSide(t) {
+  const b = t.a_alt || {};
+  if (!b.right) return '';
+  const name = b.right === 'C' ? 'Call' : 'Put';
+  if (b.baOverall === 'fail') return pill(name + ': fails bid-ask', 'p-neutral');
+  if (!b.pts) return '';
+  return pill(`${name}: ${b.verdict} ${b.hits}/${b.n}`, b.verdict === 'Strong' ? 'p-good' : b.verdict === 'Acceptable' ? 'p-warn' : 'p-neutral');
+}
 function vScreener() {
   const list = ST.cands.filter(t => t.verified);
   const rows = list.map(t => {const a = t.a || {}, st = stage(t), ok = a.baRatio && a.fq;
@@ -183,13 +202,13 @@ function vScreener() {
     <td class="r num">${ok ? f2(a.fq[0]) + ' / ' + f2(a.fq[1]) : '—'}</td><td>${ok ? pill(rp(a.baRatio[0], 0), baCls(a.baRatio[0])) : ''}</td>
     <td class="r num">${ok ? f2(a.bq[0]) + ' / ' + f2(a.bq[1]) : '—'}</td><td>${ok ? pill(rp(a.baRatio[1], 0), baCls(a.baRatio[1])) : ''}</td>
     <td class="r num">${ivp(a.fIV)}</td><td class="r num">${ivp(a.bIV)}</td><td class="r num" style="color:var(${a.yes ? '--good' : '--bad'})">${a.ivDiff == null ? '—' : (a.ivDiff >= 0 ? '+' : '') + a.ivDiff.toFixed(1)}</td>
-    <td>${a.ivDiff == null ? '' : a.yes ? pill('YES', 'p-good') : pill('NO', 'p-bad')}</td><td>${pill(st.lbl, st.cls)}</td><td class="mono muted" style="font-size:11px">${esc(t.screened || '')}</td>
+    <td>${a.ivDiff == null ? '' : a.yes ? pill('YES', 'p-good') : pill('NO', 'p-bad')}</td><td>${pill(st.lbl, st.cls)}</td><td>${otherSide(t)}</td><td class="mono muted" style="font-size:11px">${esc(t.screened || '')}</td>
     <td>${t.state === 'ready' ? `<button class="sm" data-go="analyze" data-tk="${t.symbol}">Is / Was →</button>` : `<button class="sm" data-screen="${t.symbol}">Screen</button>`}</td></tr>`}).join('');
   const t = sel(), a = A(t);
   return `${banner()}<div class="head"><div><h1>2–3 · Bid-ask and Yes / No screens</h1><p>Both legs must quote with the ask no more than ${strat().ba_pass_percent}% of the bid. Then the front (earnings) expiry must carry IV at least ${strat().iv_edge_points} points above the long expiry. A YES moves on to Is / Was.</p></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${pill('≤' + strat().ba_pass_percent + '% pass', 'p-good')}${pill(strat().ba_pass_percent + '–' + strat().ba_review_percent + '% review', 'p-warn')}${pill('>' + strat().ba_review_percent + '% fail', 'p-bad')}<button class="sm" data-screen="">Screen all now</button></div></div>
-  <div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Ticker</th><th>Report</th><th class="r">Last</th><th>Strike</th><th>Expiries</th><th class="r">Front</th><th>Ask/bid</th><th class="r">Back</th><th>Ask/bid</th><th class="r">Front IV</th><th class="r">Back IV</th><th class="r">Δ pts</th><th>Yes/No</th><th>Status</th><th>At</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="16" class="empty">No announcements loaded yet.</td></tr>'}</tbody></table></div>
-  ${feed('IBKR snapshots (reqMktData until bid, ask and model IV arrive) · strike = closest to last, call above / put below · long leg = next expiry unless its IV is still high or its market wide')}</div>
+  <div class="panel"><div class="tbl-wrap"><table><thead><tr><th>Ticker</th><th>Report</th><th class="r">Last</th><th>Strike</th><th>Expiries</th><th class="r">Front</th><th>Ask/bid</th><th class="r">Back</th><th>Ask/bid</th><th class="r">Front IV</th><th class="r">Back IV</th><th class="r">Δ pts</th><th>Yes/No</th><th>Status</th><th>Other side</th><th>At</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="17" class="empty">No announcements loaded yet.</td></tr>'}</tbody></table></div>
+  ${feed('IBKR snapshots (reqMktData until bid, ask and model IV arrive) · calls and puts at the 4 strikes nearest the price · default side = out of the money · long leg = next expiry; if its IV is still high or its market fails, the next 3 are tried')}</div>
   ${list.some(x => x.quotes_live === false) ? `<div class="note" style="margin-top:14px"><b>Screened after the close.</b> TWS sends no live option bid / ask outside 9:30–16:00 ET, so the bid-ask screen can't be judged. Screen again during the last hour, or set Market data to Frozen in Settings to use the closing quotes.</div>` : ''}
   ${t && t.state === 'ready' && a.fq ? `<div class="grid g2" style="margin-top:14px">
    <div class="panel"><div class="ph"><h2>${t.symbol} chain</h2>${tkSelect()}</div>${chainTable(t, a)}
@@ -198,17 +217,18 @@ function vScreener() {
     <div class="rule"><span class="pill ${baCls(a.baRatio[0])}">Front</span><span class="mono">${f2(a.fq[1])} ÷ ${f2(a.fq[0])} = ${rp(a.baRatio[0], 1)}</span></div>
     <div class="rule" style="margin-top:6px"><span class="pill ${baCls(a.baRatio[1])}">Back</span><span class="mono">${f2(a.bq[1])} ÷ ${f2(a.bq[0])} = ${rp(a.baRatio[1], 1)}</span></div>
     ${a.ivDiff != null ? `<div class="rule" style="margin-top:6px">${pill('IV', a.yes ? 'p-good' : 'p-bad')}<span class="mono">${ivp(a.fIV)} − ${ivp(a.bIV)} = ${a.ivDiff.toFixed(1)} pts ${a.yes ? '≥' : '<'} ${strat().iv_edge_points}</span></div>` : ''}
-    ${t.back_reason ? `<div class="note" style="margin-top:12px">${esc(t.back_reason)}</div>` : ''}
+    ${backWhy(t, a) ? `<div class="note" style="margin-top:12px">${esc(backWhy(t, a))}</div>` : ''}
     ${a.error ? `<div class="note" style="margin-top:12px">${esc(a.error)}</div>` : ''}
     <div class="note" style="margin-top:12px"><b>Expiration rule.</b> Short the first expiry after earnings. Prefer the next consecutive expiry for the long leg; skip one or two if its IV is still very high or its market is much wider than later ones.</div></div>
   </div>` : (t && t.state !== 'ready' ? `<div style="margin-top:14px">${noData(t)}</div>` : '')}`;
 }
+const backWhy = (t, a) => a.front === t.front ? ((t.back_reason_by_right || {})[a.right] ?? t.back_reason ?? '') : '';
 function chainTable(t, a) {
   const ks = t.strikes || [];
   const exps = [a.front, a.back].filter(Boolean);
   return `<div class="tbl-wrap"><table class="chain"><thead><tr><th class="r">IV</th><th class="r">Bid</th><th class="r">Ask</th><th class="r">Ask/Bid</th><th>Contract</th><th>Sim</th></tr></thead><tbody>
   ${exps.map((e, ei) => `<tr class="exp"><td colspan="6">${days(t.entry, e)} days to expiration · ${fmtE(e)}${e === t.front ? '<span class="e">E</span>' : ''}</td></tr>` + ks.map(k => {
-    const r = k >= t.S ? 'C' : 'P', x = q(t, e, r, k) || {}, on = Math.abs(k - a.K) < 1e-6;
+    const r = a.right || (k >= t.S ? 'C' : 'P'), x = q(t, e, r, k) || {}, on = Math.abs(k - a.K) < 1e-6;
     return `<tr><td class="r num">${ivp(x.iv)}</td><td class="r num"><span class="${on ? 'hl' : ''}" style="padding:1px 4px">${f2(x.bid)}</span></td><td class="r num"><span class="${on ? 'hl' : ''}" style="padding:1px 4px">${f2(x.ask)}</span></td><td class="r num">${x.bid && x.ask ? (x.ask / x.bid * 100).toFixed(0) + '%' : '—'}</td><td class="mono">${t.symbol} ${fmtE(e)} ${k} ${r}</td><td class="mono" style="color:var(${ei === 0 ? '--bad' : '--good'})">${on ? (ei === 0 ? '−1' : '+1') : ''}</td></tr>`}).join('')).join('')}
   </tbody></table></div>`;
 }
@@ -244,15 +264,35 @@ function gapChart(t, a) {
   ${a.meg != null ? `<line x1="${L}" x2="${W - 10}" y1="${Y(a.meg)}" y2="${Y(a.meg)}" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 4"/><text x="${W - 12}" y="${Y(a.meg) - 5}" text-anchor="end" style="fill:var(--accent);font-weight:600">Endurable ${a.meg.toFixed(2)}%</text>` : ''}</svg>`;
 }
 
+function sideBySide(t, a) {
+  const b = A(t, 'alt');
+  const C = a.right === 'C' ? a : b, P = a.right === 'C' ? b : a;
+  const v = (x, f) => x && x.pts ? f(x) : (x && x.error ? '—' : '…');
+  const rows = [
+    ['Legs', x => `${fmtE(x.front)} / ${fmtE(x.back)}`],
+    ['Bid-ask front / back', x => `${rp(x.baRatio[0])} / ${rp(x.baRatio[1])}`],
+    ['IV front − back', x => (x.ivDiff >= 0 ? '+' : '') + x.ivDiff.toFixed(1) + ' pts'],
+    ['Debit (25-20)', x => usd(x.debit)],
+    ['Endurable gap', x => pct(x.meg)],
+    ['Past gaps inside', x => `${x.hits}/${x.n}`],
+    ['Max gain, modeled', x => usd0(x.maxGain)],
+    ['Verdict', x => pill(x.verdict, x.verdict === 'Strong' ? 'p-good' : x.verdict === 'Acceptable' ? 'p-warn' : 'p-bad')]];
+  const cell = (x, f) => {try {return v(x, f)} catch (e) {return '—'}};
+  return `<div class="panel"><div class="ph"><h2>Call vs put calendar · ${a.K}</h2><span class="muted" style="font-size:12px">same strike, same crush</span></div>
+   <div class="tbl-wrap"><table><thead><tr><th></th><th class="r">${a.right === 'C' ? '<b>Call</b>' : 'Call'}</th><th class="r">${a.right === 'P' ? '<b>Put</b>' : 'Put'}</th></tr></thead><tbody>
+   ${rows.map(([l, f]) => `<tr><td>${l}</td><td class="r num">${cell(C, f)}</td><td class="r num">${cell(P, f)}</td></tr>`).join('')}</tbody></table></div>
+   <p class="muted" style="font-size:12px;margin:8px 0 0">The default side is the out-of-the-money one at this strike: a call when the strike is at or above the price, a put below it.</p></div>`;
+}
 function vAnalyze() {
   const t = sel();
   if (!t || t.state !== 'ready') return `${banner()}<div class="head"><div><h1>4 · Is / Was analysis</h1></div>${tkSelect()}</div>${noData(t)}`;
   const a = A(t);
   const head = `${banner()}<div class="head"><div><h1>4 · Is / Was analysis</h1><p>Model the time spread, move the date to the day after earnings, crush the front IV, and read the breakevens. That distance as a share of price is the <b>Is</b>, the endurable gap. Compare it with the last ${lb()} earnings gaps, the <b>Was</b>.</p></div>${tkSelect()}</div>`;
   const fronts = t.expiries || [], backs = fronts.filter(e => e > a.front);
-  const ivAt = e => {const r = a.K >= t.S ? 'C' : 'P'; const x = q(t, e, r, a.K); return x && x.iv ? ' · IV ' + ivp(x.iv) : ''};
+  const ivAt = e => {const r = a.right; const x = q(t, e, r, a.K); return x && x.iv ? ' · IV ' + ivp(x.iv) : ''};
   const ctrls = `<div class="panel"><div class="ctrls">
-    <label class="f" for="k-sel">Strike<select id="k-sel">${(t.strikes || []).map(k => `<option value="${k}" ${Math.abs(k - a.K) < 1e-6 ? 'selected' : ''}>${k} ${k >= t.S ? 'call' : 'put'}</option>`).join('')}</select></label>
+    <label class="f" for="k-sel">Strike<select id="k-sel">${(t.strikes || []).map(k => `<option value="${k}" ${Math.abs(k - a.K) < 1e-6 ? 'selected' : ''}>${k}${Math.abs(k - t.S) === Math.min(...(t.strikes || []).map(z => Math.abs(z - t.S))) ? ' · nearest' : ''}</option>`).join('')}</select></label>
+    <label class="f">Calendar<span class="seg"><button data-right="C" class="${a.right === 'C' ? 'on' : ''}">Call</button><button data-right="P" class="${a.right === 'P' ? 'on' : ''}">Put</button></span></label>
     <label class="f" for="f-sel">Short expiry<select id="f-sel">${fronts.slice(0, -1).map(f => `<option value="${f}" ${f === a.front ? 'selected' : ''}>${fmtE(f)}${ivAt(f)}${f === t.front ? ' · E' : ''}</option>`).join('')}</select></label>
     <label class="f" for="b-sel">Long expiry<select id="b-sel">${backs.map(b => `<option value="${b}" ${b === a.back ? 'selected' : ''}>${fmtE(b)}${ivAt(b)}</option>`).join('')}</select></label>
     <label class="f" for="crush"><span class="seg" style="align-self:flex-start"><button data-cm="mult" class="${S.crushMode === 'mult' ? 'on' : ''}">Front IV × %</button><button data-cm="retrace" class="${S.crushMode === 'retrace' ? 'on' : ''}">Retrace premium</button></span><span class="v">${a.fIV ? (S.crushMode === 'retrace' ? `${ivp(a.fIV)} − ${S.crush}% × (${ivp(a.fIV)} − ${ivp(a.bIV)})` : `${ivp(a.fIV)} × ${S.crush}%`) + ` = <b>${ivp(a.fIV1)} IV</b>` : ''}</span><input id="crush" type="range" min="${S.crushMode === 'mult' ? 30 : 50}" max="100" step="5" value="${S.crush}"></label>
@@ -281,6 +321,7 @@ function vAnalyze() {
      <div class="stat"><span class="l">Max gain at strike</span><span class="v">${usd0(a.maxGain)}</span><span class="s">per spread, modeled</span></div>
      <div class="stat"><span class="l">Max loss</span><span class="v">${usd0(a.maxLoss)}</span><span class="s">debit paid</span></div>
     </div></div>
+    ${sideBySide(t, a)}
    </div>
   </div>
   <div class="grid g-an" style="margin-top:14px">
@@ -483,6 +524,7 @@ function bind() {
   M.querySelectorAll('[data-week]').forEach(b => b.onclick = () => {S.week = b.dataset.week; render()});
   const ts = M.querySelector('#tksel'); if (ts) ts.onchange = () => {S.sel = ts.value; save(); render()};
   const P = () => (S.P[sel().symbol] = S.P[sel().symbol] || {});
+  M.querySelectorAll('[data-right]').forEach(x => x.onclick = e => {e.preventDefault(); P().right = x.dataset.right; render()});
   const k = M.querySelector('#k-sel'); if (k) k.onchange = () => {P().K = +k.value; render()};
   const fs = M.querySelector('#f-sel'); if (fs) fs.onchange = () => {P().front = fs.value; if (P().back && P().back <= fs.value) delete P().back; render()};
   const b = M.querySelector('#b-sel'); if (b) b.onchange = () => {P().back = b.value; render()};
