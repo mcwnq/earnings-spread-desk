@@ -5,17 +5,16 @@ the put calendar, whether or not it passed the screens, so the screens themselve
 day the same legs are quoted at the check times (Settings) and the close is priced the way the course does it:
 offer at the spread bid + 25% of the width. P&L is per spread against the 25-20 entry price.
 
-Saved to journal.json in the data folder; /api/journal.csv exports it for a spreadsheet."""
+Saved in desk.db (see store.py: journal, journal_sides, journal_exits); /api/journal.csv exports it for a spreadsheet."""
 from __future__ import annotations
 
 import csv
 import io
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
 
 from . import model as M
+from .store import Store
 
 log = logging.getLogger("earningsdesk")
 SIDE_FIELDS = ("right", "K", "front", "back", "fq", "bq", "fIV", "bIV", "natural", "inside", "width", "entry",
@@ -44,19 +43,9 @@ def exit_quote(entry_side: dict, f: dict, b: dict) -> dict:
 
 
 class Journal:
-    def __init__(self, path: Path):
-        self.path = path
-        self.records: list[dict] = []
-        if path.exists():
-            try:
-                self.records = json.loads(path.read_text(encoding="utf-8"))
-            except Exception as e:  # noqa: BLE001
-                log.warning("Could not read %s: %s", path, e)
-
-    def save(self):
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.records, indent=1), encoding="utf-8")
-        tmp.replace(self.path)
+    def __init__(self, store: Store):
+        self.store = store
+        self.records: list[dict] = store.journal_records()
 
     def get(self, rid: str) -> dict | None:
         return next((r for r in self.records if r["id"] == rid), None)
@@ -81,7 +70,7 @@ class Journal:
                "default_right": a.get("right"), "recorded": now.strftime("%Y-%m-%d %H:%M ET"), "sides": sides,
                "exits": {}}
         self.records = [r for r in self.records if r["id"] != rid] + [rec]
-        self.save()
+        self.store.save_journal_record(rec)
         return rec
 
     def due(self, today: str, now_hhmm: str, checks: list[str]) -> list[tuple[dict, str]]:
@@ -111,7 +100,7 @@ class Journal:
                 sides[right] = exit_quote(r["sides"][right], f, b)
         r["exits"][check] = {"at": now.strftime("%H:%M:%S"), "S": S, "sides": sides,
                              "move": round((S - r["S"]) / r["S"] * 100, 2) if S and r.get("S") else None}
-        self.save()
+        self.store.save_journal_record(r)
 
     def csv(self, checks: list[str]) -> str:
         buf = io.StringIO()

@@ -88,11 +88,24 @@ an hour is skipped rather than taken late.
 
 Data folder `~/EarningsDesk` (demo: `~/EarningsDesk-demo`):
 
-* `settings.json`
+* `desk.db`: SQLite database with the forward test (`journal`, `journal_sides`, `journal_exits`), the history of
+  every screen (`screens`) and the fills you recorded (`trades`). Open it with any SQLite viewer, for example
+  DB Browser for SQLite, even while the app runs. Back this file up: the forward test can't be rebuilt later.
+  `/api/screens?symbol=RHT` returns a symbol's screen history.
+* `settings.json`: your settings, including the Finnhub key (keep it private)
 * `overrides.json`: dates you confirmed
-* `trades.json`: fills you recorded
-* `journal.json`: the forward test
-* `cache/`: calendar answers and daily bars
+* `cache/`: calendar answers and daily bars (safe to delete; they are fetched again)
+
+An older `journal.json` / `trades.json` is imported into `desk.db` on the first start and renamed `*.imported`.
+
+Example query, P&L by verdict at the 13:30 check:
+
+```sql
+SELECT s.verdict, s.side, COUNT(*) AS trades, ROUND(AVG(x.pnl), 2) AS avg_pnl
+FROM journal_sides s JOIN journal_exits x ON x.record_id = s.record_id AND x.side = s.side
+WHERE x.check_time = '13:30' AND x.pnl IS NOT NULL
+GROUP BY s.verdict, s.side;
+```
 
 ## Tests
 
